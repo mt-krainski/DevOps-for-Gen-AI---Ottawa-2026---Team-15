@@ -49,7 +49,8 @@ settings for the same reason.
 
 - `0` — an output payload was written. Statements inside it may still carry errors.
 - `2` — the input could not be read, or it did not satisfy the contract.
-- `3` — a credential was rejected. Get a new one.
+- `3` — a credential was rejected, either the OpenRouter key or the Bright Data token. Get a new
+  one.
 - `4` — the payload was built, and it could not be written to the output path.
 - `5` — a setting is absent, or it will not parse, or the search server could not be reached. Look
   at the environment.
@@ -59,8 +60,8 @@ other codes names a different reason no output file holds a payload: the input, 
 write, or the setup. An unexpected crash exits `1`, so a failed write has a code of its own rather
 than that one.
 
-`3` and `5` are worth telling apart. A token that was supplied and refused is `3`, and a variable
-nobody filled in is `5`. They ask an operator for different things.
+`3` and `5` are worth telling apart. A credential that was supplied and refused is `3`, and a
+variable nobody filled in is `5`. They ask an operator for different things.
 
 ### Limits
 
@@ -70,18 +71,21 @@ A run checks eight statements at once. A check that is still running after 240 s
 and that statement comes back with a `timeout` error quoting the limit. One check may make ten tool
 calls before it must rule on what it has, and reaching that ceiling is not a failure: the searching
 stops there, and the agent is asked to rule on the evidence it holds. At most 100,000 characters of
-any one fetched page reach the model, and a page cut there says so where it was cut. A call that
-fails for a reason another try might fix is retried three times, with a jittered doubling wait
-between attempts.
+any one fetched page reach the model, and a page cut there says so where it was cut. A Bright Data
+call that fails for a reason another try might fix is made three times in all — the first try and
+two retries — with a jittered doubling wait between them. A failure no retry would fix ends the call
+at once, and a model request is not retried by this package at all.
 
 ### What a run costs
 
 Two meters run at once: OpenRouter charges for tokens, and Bright Data charges for requests.
 
-The request side is bounded and easy to read. One statement makes at most ten Bright Data requests,
-and a run of fifty statements at most five hundred. A run caches what it fetched, so a search or a
-page a later statement repeats costs nothing. Two statements that ask for the same thing at the same
-moment both pay for it, because neither has recorded an answer yet when the other looks.
+The request side is bounded and easy to read. One statement makes at most ten Bright Data calls, and
+a run of fifty statements at most five hundred. Each call is retried under the policy above, so ten
+calls are thirty requests where every one of them fails twice first, and the fifty-statement run
+reaches fifteen hundred. A run caches what it fetched, so a search or a page a later statement
+repeats costs nothing. Two statements that ask for the same thing at the same moment both pay for
+it, because neither has recorded an answer yet when the other looks.
 
 The token side is dominated by pages rather than searches. Every turn resends the whole
 conversation, so a fetched page is paid for again on each turn that follows it. A statement that
@@ -282,10 +286,9 @@ tool, which is what lets continuous integration run the suite with no secret of 
 
 ## Evaluation suite
 
-`eval/` holds nineteen cases and scores the tool on one thing: does it reach the right verdict.
-Sixteen are ordinary claims across the four verdicts, and three are traps — a claim whose sources
-share names, numbers and vocabulary with it, so that a careless read takes topical overlap for
-confirmation.
+`eval/` scores the tool on one thing: does it reach the right verdict. Its cases cover all four
+verdicts, and a few of them are traps — a claim whose sources share names, numbers and vocabulary
+with it, so that a careless read takes topical overlap for confirmation.
 
 It runs by hand and never on a push, because every case spends real money at OpenRouter and real
 requests at Bright Data.
@@ -312,9 +315,16 @@ Nothing asserts on the justification, the references, or the confidence. That ke
 and cheap, and it leaves one blind spot worth remembering when you read a score: a case that guesses
 the right verdict with no evidence behind it scores exactly like one that did the work.
 
-The two `mixed` cases sit on a genuine judgement boundary, where a defensible `refuted` scores zero.
+The `mixed` cases sit on a genuine judgement boundary, where a defensible `refuted` scores zero.
 Read those failures rather than counting them.
 
-A full run costs under a dollar at the default model, and roughly twenty-five times that at
-`anthropic/claude-sonnet-5`. promptfoo caches its results, so a case that has not changed costs
-nothing on a rerun.
+What a full run costs has not been measured. Reasoned from the default model's $0.08 per million
+input tokens and the 100,000-character page ceiling, a run of the suite comes to well under a
+dollar, and roughly twenty-five times that at `anthropic/claude-sonnet-5`. One figure here was
+observed rather than reasoned: a live run of three statements, two of them checked, spent 11,996
+prompt tokens and 908 completion tokens across three searches.
+
+That prices the OpenRouter meter alone. Bright Data charges for the searches and page reads on top
+of it, at whatever your plan pays per request, and no per-request price is published here to add up.
+
+promptfoo caches its results, so a case that has not changed costs nothing on a rerun.

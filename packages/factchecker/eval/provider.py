@@ -1,7 +1,7 @@
 """promptfoo's Python provider: one case in, one ruling out.
 
 promptfoo spawns this file once per case, so each case opens its own connection and
-starts with an empty cache. That costs a little at nineteen cases and keeps them
+starts with an empty cache. That costs a little on every case and keeps them
 independent: no case can be made cheaper, or easier, by the case that ran before it.
 
 The interpreter promptfoo spawns has to be the package's own, because this imports

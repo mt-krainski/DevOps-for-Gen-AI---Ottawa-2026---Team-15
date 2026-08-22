@@ -1,5 +1,6 @@
-# The nineteen cases the evaluation suite scores. `promptfooconfig.yaml` holds the
-# assertions; every case here is data.
+# The cases the evaluation suite scores. Every verdict the tool can reach has cases
+# here, the traps below among them. `promptfooconfig.yaml` holds the assertions;
+# every case here is data.
 #
 # Every claim anchors to a dated event, never to a present state, so a case cannot
 # change its own answer and rot the suite.
