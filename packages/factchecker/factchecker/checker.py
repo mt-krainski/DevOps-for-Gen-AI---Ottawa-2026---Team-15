@@ -1,4 +1,4 @@
-"""The checker seam: what a checking agent returns, and the offline stand-in."""
+"""The checker seam: what a checking agent is asked for, and what it hands back."""
 
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -37,35 +37,3 @@ class StatementChecker(Protocol):
             The ruling, and the tokens and searches that producing it consumed.
         """
         ...
-
-
-class OfflineChecker:
-    """A checker that rules without searching, so integrators can parse an output.
-
-    The verdict is a deliberate stand-in. The README defines `unverifiable` as a search
-    that ran and settled nothing, and here no search ran at all: the justification says
-    so plainly rather than leaving a reader to infer it.
-    """
-
-    async def check(self, statement: IdentifiedStatement) -> CheckOutcome:
-        """Rule `unverifiable` at no confidence, having consumed nothing.
-
-        Args:
-            statement: The statement that would have been checked.
-
-        Returns:
-            An outcome whose ruling cites nothing and whose usage is zero.
-        """
-        return CheckOutcome(
-            ruling=Ruling(
-                verdict="unverifiable",
-                confidence=0.0,
-                justification=(
-                    "No search was performed because no checking agent is configured."
-                ),
-                references=[],
-            ),
-            prompt_tokens=0,
-            completion_tokens=0,
-            searches=0,
-        )

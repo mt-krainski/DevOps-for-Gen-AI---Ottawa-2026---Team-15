@@ -8,8 +8,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from factchecker.checker import CheckOutcome, OfflineChecker, StatementChecker
-from factchecker.errors import AuthenticationFailed, InputValidationError
+from factchecker.checker import CheckOutcome, StatementChecker
+from factchecker.errors import (
+    AuthenticationFailed,
+    CheckFailed,
+    InputValidationError,
+)
 from factchecker.models import (
     IdentifiedStatement,
     InputPayload,
@@ -37,11 +41,6 @@ def _payload(*classes: StatementClass) -> InputPayload:
             ]
         }
     )
-
-
-def _identified_statement() -> IdentifiedStatement:
-    """One identified statement, for a checker called directly."""
-    return IdentifiedStatement.model_validate(wire_statement(id="s1"))
 
 
 def _outcome(verdict: Verdict = "supported", searches: int = 3) -> CheckOutcome:
@@ -191,25 +190,9 @@ def test_run_settings_carry_the_documented_defaults() -> None:
     assert settings.statement_timeout_seconds == 240.0
 
 
-def test_the_offline_checker_rules_unverifiable_without_searching() -> None:
-    """The stand-in returns a populated ruling that says no search ran."""
-    outcome = asyncio.run(OfflineChecker().check(_identified_statement()))
-
-    assert outcome.ruling.verdict == "unverifiable"
-    assert outcome.ruling.confidence == 0.0
-    assert outcome.ruling.references == []
-    assert "no search" in outcome.ruling.justification.lower()
-    assert "no checking agent is configured" in outcome.ruling.justification.lower()
-    assert (outcome.prompt_tokens, outcome.completion_tokens, outcome.searches) == (
-        0,
-        0,
-        0,
-    )
-
-
-def test_the_offline_checker_satisfies_the_statement_checker_protocol() -> None:
-    """The stand-in is published as implementing the seam; this is what checks it."""
-    assert isinstance(OfflineChecker(), StatementChecker)
+def test_a_checker_with_a_check_coroutine_satisfies_the_protocol() -> None:
+    """The seam is published as runtime-checkable; this is what checks it."""
+    assert isinstance(_ScriptedChecker({}), StatementChecker)
 
 
 def test_an_opinion_statement_never_reaches_the_checker() -> None:
@@ -352,6 +335,32 @@ def test_a_checker_exception_becomes_an_error_and_the_run_continues() -> None:
     assert "the upstream service said no" in failed.error.message
     assert checked.ruling is not None
     assert checked.error is None
+
+
+def test_a_check_failed_reaches_the_output_under_its_own_kind() -> None:
+    """A checker that names its failure keeps the name, rather than `check_failed`."""
+    checker = _ScriptedChecker(
+        {
+            "s1": CheckFailed("malformed_ruling", "the ruling did not validate"),
+            "s2": RuntimeError("the upstream service said no"),
+        }
+    )
+
+    result = asyncio.run(
+        run_check(
+            _payload("fact", "fact"),
+            checker,
+            _settings(),
+            _clock(STARTED_AT, FINISHED_AT),
+        )
+    )
+
+    named, blanket = result.statements
+    assert named.error is not None
+    assert named.error.kind == "malformed_ruling"
+    assert named.error.message == "the ruling did not validate"
+    assert blanket.error is not None
+    assert blanket.error.kind == "check_failed"
 
 
 def test_authentication_failure_ends_the_run_without_waiting_for_the_rest() -> None:

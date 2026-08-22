@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from factchecker.checker import CheckOutcome, StatementChecker
-from factchecker.errors import AuthenticationFailed
+from factchecker.errors import AuthenticationFailed, CheckFailed
 from factchecker.ingest import assign_ids
 from factchecker.models import (
     CheckError,
@@ -148,6 +148,8 @@ async def _settle(
             return _failure(statement, kind="check_failed", message=str(exc))
         except AuthenticationFailed:
             raise
+        except CheckFailed as named:
+            return _failure(statement, kind=named.kind, message=named.message)
         except Exception as exc:  # noqa: BLE001 — a failed check must not end the run
             return _failure(statement, kind="check_failed", message=str(exc))
 
