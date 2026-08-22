@@ -4,10 +4,18 @@ from statement_classifier.models import (
     ClassifiedStatement,
     ClassifierInput,
     ClassifierOutput,
+    ParagraphClassifiedStatement,
+    ParagraphClassifierOutput,
+    ParagraphInput,
     Statement,
     StatementError,
 )
-from statement_classifier.service import classify_statements, classify_statements_sync
+from statement_classifier.service import (
+    classify_paragraph,
+    classify_paragraph_sync,
+    classify_statements,
+    classify_statements_sync,
+)
 
 __all__ = [
     "Classification",
@@ -16,8 +24,13 @@ __all__ = [
     "ClassifierInput",
     "ClassifierOutput",
     "ErrorCode",
+    "ParagraphClassifiedStatement",
+    "ParagraphClassifierOutput",
+    "ParagraphInput",
     "Statement",
     "StatementError",
+    "classify_paragraph",
+    "classify_paragraph_sync",
     "classify_statements",
     "classify_statements_sync",
 ]
