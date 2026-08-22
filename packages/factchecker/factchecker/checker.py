@@ -22,7 +22,9 @@ class StatementChecker(Protocol):
 
     Runtime-checkable so that an implementation can be asserted against the seam by
     `isinstance`. No type checker runs over this package, so that assertion is the
-    only thing binding an implementation to the protocol.
+    only thing checking that an implementation exposes the seam at all: it catches a
+    missing or renamed `check` and nothing more. The signature stays bound by the
+    tests that call `check` for real.
     """
 
     async def check(self, statement: IdentifiedStatement) -> CheckOutcome:
