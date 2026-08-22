@@ -69,7 +69,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         _write_output(arguments.output, output)
     except OSError as failure:
-        logger.critical("output %s cannot be written: %s", arguments.output, failure)
+        # `str(OSError)` repeats the filename, which this line already names.
+        logger.critical(
+            "output %s cannot be written: %s", arguments.output, failure.strerror
+        )
         return EXIT_OUTPUT_UNWRITABLE
     return EXIT_OK
 

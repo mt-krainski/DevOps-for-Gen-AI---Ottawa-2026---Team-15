@@ -300,7 +300,8 @@ def test_an_unwritable_output_path_exits_four(
 
     assert not output_path.exists()
     stderr = capsys.readouterr().err
-    assert str(output_path) in stderr
+    assert stderr.count(str(output_path)) == 1
+    assert "No such file or directory" in stderr
     assert "Traceback" not in stderr
 
 
