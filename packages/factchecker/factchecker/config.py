@@ -50,6 +50,21 @@ class McpEndpoint:
         """Return what `__str__` returns, so no conversion reveals more than another."""
         return str(self)
 
+    def __eq__(self, other: object) -> bool:
+        """Return whether `other` is an endpoint around the same token.
+
+        Comparison reads the token itself rather than a built URL, so equality
+        gives the token no way out: an assertion on two unequal endpoints prints
+        the redacted form of each.
+        """
+        if not isinstance(other, McpEndpoint):
+            return NotImplemented
+        return self._token == other._token
+
+    def __hash__(self) -> int:
+        """Return a hash of the token, so equal endpoints hash alike."""
+        return hash(self._token)
+
     def _url(self, token: str) -> str:
         """Build the endpoint URL around whatever stands in the token's place."""
         return f"{BRIGHTDATA_MCP_URL}?token={token}"
@@ -92,22 +107,22 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         leaves unset or empty.
 
     Raises:
-        ConfigurationError: A required variable is unset or empty, or an override
-            will not parse as its type.
+        ConfigurationError: A required variable is unset or empty, an override
+            will not parse as its type, or a numeric override is not above zero.
     """
     return Settings(
         openrouter_api_key=_required(env, "OPENROUTER_API_KEY"),
         model=_parsed(env, "FACTCHECKER_MODEL", str, "google/gemma-4-31b-it"),
         mcp_endpoint=McpEndpoint(_required(env, "BRIGHTDATA_API_TOKEN")),
-        tool_call_budget=_parsed(env, "FACTCHECKER_TOOL_CALL_BUDGET", int, 10),
-        page_character_ceiling=_parsed(
+        tool_call_budget=_positive(env, "FACTCHECKER_TOOL_CALL_BUDGET", int, 10),
+        page_character_ceiling=_positive(
             env, "FACTCHECKER_PAGE_CHARACTER_CEILING", int, 100000
         ),
-        concurrency=_parsed(env, "FACTCHECKER_CONCURRENCY", int, 8),
-        statement_timeout_seconds=_parsed(
+        concurrency=_positive(env, "FACTCHECKER_CONCURRENCY", int, 8),
+        statement_timeout_seconds=_positive(
             env, "FACTCHECKER_STATEMENT_TIMEOUT_SECONDS", float, 240.0
         ),
-        retry_attempts=_parsed(env, "FACTCHECKER_RETRY_ATTEMPTS", int, 3),
+        retry_attempts=_positive(env, "FACTCHECKER_RETRY_ATTEMPTS", int, 3),
     )
 
 
@@ -174,3 +189,31 @@ def _parsed[T](env: Mapping[str, str], name: str, kind: type[T], default: T) -> 
         raise ConfigurationError(
             f"{name} is set to {written!r}, which will not parse as {kind.__name__}"
         ) from failure
+
+
+def _positive[T: (int, float)](
+    env: Mapping[str, str], name: str, kind: type[T], default: T
+) -> T:
+    """Read a numeric override, and reject a value at or below zero.
+
+    A concurrency of 0 is a semaphore no worker passes, and a timeout below zero
+    expires before the work starts. Each fails without a diagnostic, so each is
+    refused here, where the rejection can name the variable.
+
+    Args:
+        env: The environment to read.
+        name: The variable to read.
+        kind: The type the written value is parsed as.
+        default: What applies where the variable is unset or empty.
+
+    Returns:
+        The parsed value, or the default.
+
+    Raises:
+        ConfigurationError: The written value will not parse as `kind`, or it
+            parses to a value at or below zero.
+    """
+    value = _parsed(env, name, kind, default)
+    if value <= 0:
+        raise ConfigurationError(f"{name} is set to {value!r}, which is not above zero")
+    return value

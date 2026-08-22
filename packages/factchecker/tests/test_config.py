@@ -57,6 +57,12 @@ def _tunables(settings: Settings) -> dict[str, object]:
     }
 
 
+def test_the_pinned_hosts_are_the_ones_this_package_documents() -> None:
+    """Every other host assertion is built on these two, so pin them to literals."""
+    assert OPENROUTER_BASE_URL == "https://openrouter.ai/api/v1"
+    assert BRIGHTDATA_MCP_URL == "https://mcp.brightdata.com/mcp"
+
+
 def test_the_required_variables_alone_produce_the_documented_defaults() -> None:
     """Two variables are enough, and every other setting falls back."""
     settings = load_settings(REQUIRED_ONLY)
@@ -108,6 +114,14 @@ def test_an_override_that_will_not_parse_is_named(name: str) -> None:
         load_settings(REQUIRED_ONLY | {name: "as many as it takes"})
 
 
+@pytest.mark.parametrize("written", ["0", "-1"])
+@pytest.mark.parametrize("name", NUMERIC_OVERRIDES)
+def test_a_numeric_override_at_or_below_zero_is_named(name: str, written: str) -> None:
+    """A concurrency of none hangs a run in silence, so no tunable may sink there."""
+    with pytest.raises(ConfigurationError, match=name):
+        load_settings(REQUIRED_ONLY | {name: written})
+
+
 def test_an_empty_override_takes_its_default() -> None:
     """A variable written with no value after it counts as unset."""
     settings = load_settings(REQUIRED_ONLY | dict.fromkeys(OVERRIDES, ""))
@@ -142,6 +156,21 @@ def test_the_endpoint_exposes_the_whole_url_through_its_named_accessor() -> None
     expected = f"{BRIGHTDATA_MCP_URL}?token={BRIGHTDATA_CREDENTIAL}"
 
     assert endpoint.unredacted_url() == expected
+
+
+def test_endpoints_compare_by_the_token_they_hold() -> None:
+    """Two endpoints around one token are one value, and they hash alike."""
+    endpoint = McpEndpoint(BRIGHTDATA_CREDENTIAL)
+
+    assert endpoint == McpEndpoint(BRIGHTDATA_CREDENTIAL)
+    assert hash(endpoint) == hash(McpEndpoint(BRIGHTDATA_CREDENTIAL))
+    assert endpoint != McpEndpoint("brd-0000000000")
+    assert endpoint != BRIGHTDATA_MCP_URL
+
+
+def test_two_settings_read_from_one_environment_are_equal() -> None:
+    """Loading twice gives equal values, now the endpoint compares by token."""
+    assert load_settings(OVERRIDDEN) == load_settings(OVERRIDDEN)
 
 
 def test_no_log_record_carries_the_token(caplog: pytest.LogCaptureFixture) -> None:
