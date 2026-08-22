@@ -143,18 +143,21 @@ The same statements, in the order submitted, each carrying either a `classificat
 
 ### Output
 
-The statements the paragraph was split into, in reading order. There is no `surroundingContext`
-per item — the paragraph was the input, not per-statement data worth echoing back:
+The statements the paragraph was split into, in reading order. Each carries the whole paragraph as
+its `surroundingContext`, because the paragraph is the only context a paragraph-mode caller
+supplies. The shape is `classify`'s output, so either mode feeds the next stage:
 
 ```json
 {
   "statements": [
     {
+      "surroundingContext": "Carney confirmed he was “reluctantly” adding tariffs that would add costs in some areas for Canadians, but insisted they were necessary to retaliate against United States President Donald Trump’s levies",
       "statement": "Carney confirmed he was “reluctantly” adding tariffs that would add costs in some areas for Canadians",
       "classification": { "class": "fact", "confidence": 0.95 },
       "error": null
     },
     {
+      "surroundingContext": "Carney confirmed he was “reluctantly” adding tariffs that would add costs in some areas for Canadians, but insisted they were necessary to retaliate against United States President Donald Trump’s levies",
       "statement": "but insisted they were necessary to retaliate against United States President Donald Trump’s levies",
       "classification": { "class": "opinion", "confidence": 0.95 },
       "error": null
@@ -162,6 +165,9 @@ per item — the paragraph was the input, not per-statement data worth echoing b
   ]
 }
 ```
+
+That handoff holds as long as every statement classified. A statement whose classification failed
+carries `classification: null`, and the next stage rejects the whole payload over it.
 
 ## Errors
 

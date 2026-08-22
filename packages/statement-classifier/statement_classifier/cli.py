@@ -9,7 +9,7 @@ from typing import Any
 
 from statement_classifier.config import DEFAULT_CONCURRENCY
 from statement_classifier.errors import ClassifierError, ErrorCode
-from statement_classifier.models import ClassifierOutput, ParagraphClassifierOutput
+from statement_classifier.models import ClassifierOutput
 from statement_classifier.service import (
     classify_paragraph_sync,
     classify_statements_sync,
@@ -94,7 +94,7 @@ def _write_error(code: ErrorCode, message: str) -> None:
 
 def _run(
     args: argparse.Namespace,
-    sync_fn: Callable[..., ClassifierOutput | ParagraphClassifierOutput],
+    sync_fn: Callable[..., ClassifierOutput],
 ) -> int:
     try:
         raw = _read_input(args.input)

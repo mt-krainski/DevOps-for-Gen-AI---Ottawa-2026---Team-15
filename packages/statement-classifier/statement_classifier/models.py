@@ -71,19 +71,3 @@ class ParagraphInput(_WireModel):
         if not value.strip():
             raise ValueError("paragraph must not be empty or whitespace-only")
         return value
-
-
-class ParagraphClassifiedStatement(_WireModel):
-    """A statement this package extracted from the paragraph, now classified.
-
-    No `surroundingContext`: the paragraph was the caller's input, not
-    per-statement data worth echoing back.
-    """
-
-    statement: str
-    classification: Classification | None = None
-    error: StatementError | None = None
-
-
-class ParagraphClassifierOutput(_WireModel):
-    statements: list[ParagraphClassifiedStatement]

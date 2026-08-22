@@ -37,8 +37,9 @@ a single paragraph, and this package does the splitting itself before classifyin
 - The original mode (statements pre-split by the caller) stays exactly as documented above —
   unchanged input/output shape, unchanged CLI subcommand, unchanged Python functions. A teammate
   already integrated against it is unaffected.
-- Paragraph mode is additive: a new input shape, a new output shape, a new CLI subcommand, and new
-  Python functions, sitting alongside the originals.
+- Paragraph mode is additive: a new input shape, a new CLI subcommand, and new Python functions,
+  sitting alongside the originals. It returns the original mode's output shape, so a consumer reads
+  one shape whichever mode produced it.
 
 **Segmentation**
 - A paragraph is split into statements by a second, separate LLM call (not folded into the per-
@@ -65,11 +66,13 @@ Output:
 {
   "statements": [
     {
+      "surroundingContext": "Carney confirmed he was “reluctantly” adding tariffs that would add costs in some areas for Canadians, but insisted they were necessary to retaliate against United States President Donald Trump’s levies",
       "statement": "Carney confirmed he was “reluctantly” adding tariffs that would add costs in some areas for Canadians",
       "classification": { "class": "fact", "confidence": 0.95 },
       "error": null
     },
     {
+      "surroundingContext": "Carney confirmed he was “reluctantly” adding tariffs that would add costs in some areas for Canadians, but insisted they were necessary to retaliate against United States President Donald Trump’s levies",
       "statement": "but insisted they were necessary to retaliate against United States President Donald Trump’s levies",
       "classification": { "class": "opinion", "confidence": 0.95 },
       "error": null
@@ -78,11 +81,14 @@ Output:
 }
 ```
 
-Unlike the original mode's output, there is no `surroundingContext` field per item — the paragraph
-was the caller's input, not per-statement data worth echoing back. `error` is kept, for the same
-per-statement-isolation reason as the original mode: one statement's classification failing (after
-retries) sets that item's `classification` to `null` and populates `error`, without discarding its
-siblings.
+Each item carries the whole paragraph as its `surroundingContext`, which is the value the
+classification call already used as context. Echoing it makes paragraph output the same shape as
+`classify` output, so the downstream fact-verification stage reads either mode's output.
+
+`error` is kept, for the same per-statement-isolation reason as the original mode: one statement's
+classification failing (after retries) sets that item's `classification` to `null` and populates
+`error`, without discarding its siblings. That null is the one incompatibility surviving in both
+modes — the downstream stage requires the field, so it rejects the whole payload over it.
 
 **Error handling**
 - One new batch-level code, `SEGMENTATION_ERROR`: the segmentation call failed on every attempt, or
@@ -101,7 +107,7 @@ siblings.
 ```python
 async def classify_paragraph(
     payload: ParagraphInput, *, concurrency: int = 5
-) -> ParagraphClassifierOutput: ...
+) -> ClassifierOutput: ...
 ```
 Plus a sync wrapper, `classify_paragraph_sync`, mirroring `classify_statements_sync`.
 
@@ -123,8 +129,8 @@ Plus a sync wrapper, `classify_paragraph_sync`, mirroring `classify_statements_s
 - An empty/whitespace `paragraph` raises `ClassifierError(code="INVALID_INPUT")` before any LLM call.
 - One statement's classification failing (after the paragraph was split successfully) is isolated
   onto that item, the same isolation test as the original mode, run through paragraph mode instead.
-- CLI: valid paragraph input file → output file written, exit code `0`, no `surroundingContext` key
-  present in the written JSON.
+- CLI: valid paragraph input file → output file written, exit code `0`, and the written JSON
+  carries a `surroundingContext` key on each statement.
 
 ## Implementation Decisions
 

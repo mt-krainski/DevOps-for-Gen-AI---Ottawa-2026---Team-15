@@ -12,8 +12,6 @@ from statement_classifier.models import (
     Classification,
     ClassifiedStatement,
     ClassifierOutput,
-    ParagraphClassifiedStatement,
-    ParagraphClassifierOutput,
 )
 
 VALID_INPUT = {
@@ -35,10 +33,11 @@ def _fake_output() -> ClassifierOutput:
     )
 
 
-def _fake_paragraph_output() -> ParagraphClassifierOutput:
-    return ParagraphClassifierOutput(
+def _fake_paragraph_output() -> ClassifierOutput:
+    return ClassifierOutput(
         statements=[
-            ParagraphClassifiedStatement(
+            ClassifiedStatement(
+                surrounding_context="The sky is blue",
                 statement="The sky is blue",
                 classification=Classification(**{"class": "fact", "confidence": 0.9}),
                 error=None,
@@ -213,7 +212,7 @@ def test_classify_paragraph_valid_file_writes_output_with_exit_zero(
     assert exit_code == 0
     result = json.loads(output_path.read_text())
     assert result["statements"][0]["classification"]["class"] == "fact"
-    assert "surroundingContext" not in result["statements"][0]
+    assert result["statements"][0]["surroundingContext"] == "The sky is blue"
 
 
 def test_classify_paragraph_malformed_json_exits_nonzero_with_stderr_error(

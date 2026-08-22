@@ -21,8 +21,6 @@ from statement_classifier.models import (
     ClassifiedStatement,
     ClassifierInput,
     ClassifierOutput,
-    ParagraphClassifiedStatement,
-    ParagraphClassifierOutput,
     ParagraphInput,
     Statement,
     StatementError,
@@ -177,7 +175,7 @@ async def classify_paragraph(
     concurrency: int = DEFAULT_CONCURRENCY,
     classifier_model: StructuredClassifierModel | None = None,
     segmenter_model: StructuredSegmenterModel | None = None,
-) -> ParagraphClassifierOutput:
+) -> ClassifierOutput:
     """Split a paragraph into statements, then classify each concurrently.
 
     Each extracted statement is classified using the whole paragraph as its
@@ -196,7 +194,8 @@ async def classify_paragraph(
             one from the environment.
 
     Returns:
-        The statements the paragraph was split into, each carrying a
+        The statements the paragraph was split into, in `classify`'s output
+        shape: each carries the paragraph as its surrounding context, and a
         classification or an error.
 
     Raises:
@@ -228,16 +227,7 @@ async def classify_paragraph(
     ]
     results = await _classify_batch(statements, classifier_model, concurrency)
 
-    return ParagraphClassifierOutput(
-        statements=[
-            ParagraphClassifiedStatement(
-                statement=result.statement,
-                classification=result.classification,
-                error=result.error,
-            )
-            for result in results
-        ]
-    )
+    return ClassifierOutput(statements=results)
 
 
 def classify_statements_sync(
@@ -267,7 +257,7 @@ def classify_paragraph_sync(
     concurrency: int = DEFAULT_CONCURRENCY,
     classifier_model: StructuredClassifierModel | None = None,
     segmenter_model: StructuredSegmenterModel | None = None,
-) -> ParagraphClassifierOutput:
+) -> ClassifierOutput:
     """Classify a paragraph from a caller not already in an async context.
 
     Args:

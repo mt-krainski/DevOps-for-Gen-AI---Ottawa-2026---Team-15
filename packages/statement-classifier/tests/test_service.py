@@ -242,8 +242,8 @@ async def test_paragraph_splits_and_classifies_fact_then_opinion() -> None:
     assert output.statements[1].classification.class_ == "opinion"
 
 
-async def test_paragraph_output_omits_surrounding_context() -> None:
-    """The wire shape carries `statement`, `classification`, `error` only."""
+async def test_paragraph_output_echoes_the_paragraph_as_surrounding_context() -> None:
+    """The wire shape is `classify`'s, so the output feeds the downstream stage."""
     segmenter_model = FakeModel([_Segments(statements=[FIRST_CLAUSE])])
     classifier_model = FakeModel(
         [Classification(**{"class": "fact", "confidence": 0.95})]
@@ -256,6 +256,7 @@ async def test_paragraph_output_omits_surrounding_context() -> None:
     )
 
     assert json.loads(output.model_dump_json())["statements"][0] == {
+        "surroundingContext": PARAGRAPH,
         "statement": FIRST_CLAUSE,
         "classification": {"class": "fact", "confidence": 0.95},
         "error": None,
@@ -332,6 +333,7 @@ async def test_paragraph_one_failing_statement_does_not_affect_siblings() -> Non
     failed, succeeded = output.statements
     assert failed.classification is None
     assert failed.error.code == ErrorCode.LLM_ERROR
+    assert failed.surrounding_context == PARAGRAPH
     assert succeeded.classification.class_ == "opinion"
     assert succeeded.error is None
 
