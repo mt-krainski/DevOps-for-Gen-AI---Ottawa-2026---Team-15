@@ -18,6 +18,7 @@ from factchecker.models import (
     Verdict,
 )
 from factchecker.run import RunSettings, run_check
+from tests.conftest import wire_statement
 
 STARTED_AT = datetime(2026, 8, 22, 14, 3, 11, tzinfo=UTC)
 FINISHED_AT = datetime(2026, 8, 22, 14, 5, 47, tzinfo=UTC)
@@ -28,25 +29,19 @@ def _payload(*classes: StatementClass) -> InputPayload:
     return InputPayload.model_validate(
         {
             "statements": [
-                {
-                    "surroundingContext": f"The paragraph around claim {position}.",
-                    "statement": f"Claim {position}",
-                    "classification": {"class": class_, "confidence": 0.7},
-                }
+                wire_statement(
+                    statement=f"Claim {position}",
+                    classification={"class": class_, "confidence": 0.7},
+                )
                 for position, class_ in enumerate(classes, start=1)
             ]
         }
     )
 
 
-def _statement() -> IdentifiedStatement:
+def _identified_statement() -> IdentifiedStatement:
     """One identified statement, for a checker called directly."""
-    return IdentifiedStatement(
-        id="s1",
-        surrounding_context="The paragraph around the claim.",
-        statement="Water boils at 100 C",
-        classification={"class": "fact", "confidence": 0.7},
-    )
+    return IdentifiedStatement.model_validate(wire_statement(id="s1"))
 
 
 def _outcome(verdict: Verdict = "supported", searches: int = 3) -> CheckOutcome:
@@ -198,7 +193,7 @@ def test_run_settings_carry_the_documented_defaults() -> None:
 
 def test_the_offline_checker_rules_unverifiable_without_searching() -> None:
     """The stand-in returns a populated ruling that says no search ran."""
-    outcome = asyncio.run(OfflineChecker().check(_statement()))
+    outcome = asyncio.run(OfflineChecker().check(_identified_statement()))
 
     assert outcome.ruling.verdict == "unverifiable"
     assert outcome.ruling.confidence == 0.0
@@ -522,18 +517,8 @@ def test_a_repeated_identifier_is_rejected_before_any_check_runs() -> None:
     payload = InputPayload.model_validate(
         {
             "statements": [
-                {
-                    "id": "dup",
-                    "surroundingContext": "context",
-                    "statement": "one",
-                    "classification": {"class": "fact", "confidence": 0.7},
-                },
-                {
-                    "id": "dup",
-                    "surroundingContext": "context",
-                    "statement": "two",
-                    "classification": {"class": "fact", "confidence": 0.7},
-                },
+                wire_statement(id="dup", statement="one"),
+                wire_statement(id="dup", statement="two"),
             ]
         }
     )

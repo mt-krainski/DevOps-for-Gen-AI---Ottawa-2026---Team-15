@@ -34,12 +34,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         argv: The arguments after the program name. `None` reads `sys.argv`.
 
     Returns:
-        The process exit code. It is 0 where an output payload was written, which
-        includes a run whose statements carry errors of their own. Every other code
-        says why no output file holds a payload: 2 where the input could not be read
-        or did not satisfy the contract, 3 where a credential was rejected, and 4
-        where the payload was built and the write failed. A crash exits 1, so the
-        failed write carries a code of its own rather than that one.
+        One of the four exit-code constants above, whichever the path through this
+        function reaches. The README's exit-code table is where each code's meaning
+        is published.
     """
     arguments = _parse_arguments(argv)
     configure_logging(arguments.verbose)

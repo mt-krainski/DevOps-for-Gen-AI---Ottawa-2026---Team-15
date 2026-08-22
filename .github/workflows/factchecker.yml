@@ -2,6 +2,10 @@ name: factchecker
 
 # The path filter keeps this package's checks independent of every other package
 # in the monorepo: a teammate's change never queues, or fails, this job.
+#
+# The two actions below are pinned at different depths on purpose. Each sits at
+# the version already observed to resolve and run green, and that observation is
+# what a bump needs — not a matching depth between the two.
 on:
   pull_request:
     paths:
@@ -15,9 +19,9 @@ defaults:
   run:
     working-directory: packages/factchecker
 
-# Nothing here supplies a credential and nothing calls a model: every test in
-# this package runs against a checker the test injects. That is why no step
-# below carries an `env` or a `secrets` block.
+# Nothing here supplies a credential and nothing calls a model: this package
+# ships no checking agent, so there is no upstream service to authenticate
+# against. That is why no step below carries an `env` or a `secrets` block.
 jobs:
   checks:
     name: Lint and test

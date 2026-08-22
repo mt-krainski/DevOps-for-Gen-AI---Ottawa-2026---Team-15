@@ -19,13 +19,9 @@ from factchecker.models import (
     Ruling,
     Usage,
 )
+from tests.conftest import wire_statement
 
-WIRE_STATEMENT = {
-    "id": "s1",
-    "surroundingContext": "Water is odd. Water boils at 100 C. The tables agree.",
-    "statement": "Water boils at 100 C",
-    "classification": {"class": "fact", "confidence": 0.7},
-}
+WIRE_STATEMENT = wire_statement(id="s1")
 
 WIRE_META = {
     "model": "anthropic/claude-sonnet-4",
@@ -99,7 +95,7 @@ def test_classification_reads_the_class_alias() -> None:
 def test_input_statement_drops_a_field_the_contract_does_not_name() -> None:
     """A classifier that adds a field does not break this package."""
     statement = InputStatement.model_validate(
-        {**WIRE_STATEMENT, "classifierBuild": "2026-08-01"}
+        wire_statement(id="s1", classifierBuild="2026-08-01")
     )
 
     assert statement.model_dump(mode="json") == WIRE_STATEMENT
@@ -107,17 +103,13 @@ def test_input_statement_drops_a_field_the_contract_does_not_name() -> None:
 
 def test_input_statement_id_defaults_to_none() -> None:
     """An input statement may arrive without an identifier."""
-    without_id = {key: value for key, value in WIRE_STATEMENT.items() if key != "id"}
-
-    assert InputStatement.model_validate(without_id).id is None
+    assert InputStatement.model_validate(wire_statement()).id is None
 
 
 def test_identified_statement_requires_an_id() -> None:
     """Once identifiers are assigned, every statement carries one."""
-    without_id = {key: value for key, value in WIRE_STATEMENT.items() if key != "id"}
-
     with pytest.raises(ValidationError) as caught:
-        IdentifiedStatement.model_validate(without_id)
+        IdentifiedStatement.model_validate(wire_statement())
 
     assert "id" in str(caught.value)
 
@@ -125,7 +117,7 @@ def test_identified_statement_requires_an_id() -> None:
 def test_input_payload_reads_a_list_of_statements() -> None:
     """The payload wraps the statements it was given, in order."""
     payload = InputPayload.model_validate(
-        {"statements": [WIRE_STATEMENT, {**WIRE_STATEMENT, "id": "s2"}]}
+        {"statements": [wire_statement(id="s1"), wire_statement(id="s2")]}
     )
 
     assert [statement.id for statement in payload.statements] == ["s1", "s2"]

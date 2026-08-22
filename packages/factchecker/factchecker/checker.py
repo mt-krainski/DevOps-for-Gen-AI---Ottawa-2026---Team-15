@@ -18,7 +18,7 @@ class CheckOutcome:
 
 @runtime_checkable
 class StatementChecker(Protocol):
-    """The seam the searching agent implements.
+    """The seam a checking agent implements.
 
     Runtime-checkable so that an implementation can be asserted against the seam by
     `isinstance`. No type checker runs over this package, so that assertion is the
@@ -42,7 +42,7 @@ class StatementChecker(Protocol):
 class OfflineChecker:
     """A checker that rules without searching, so integrators can parse an output.
 
-    The verdict is a deliberate stand-in. The spec's `unverifiable` describes a search
+    The verdict is a deliberate stand-in. The README defines `unverifiable` as a search
     that ran and settled nothing, and here no search ran at all: the justification says
     so plainly rather than leaving a reader to infer it.
     """

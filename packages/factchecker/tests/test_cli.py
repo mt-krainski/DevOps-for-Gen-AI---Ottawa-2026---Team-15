@@ -14,6 +14,7 @@ from factchecker.checker import CheckOutcome
 from factchecker.errors import AuthenticationFailed
 from factchecker.logging_setup import configure_logging
 from factchecker.models import IdentifiedStatement
+from tests.conftest import wire_statement
 
 PACKAGE_LOGGER = "factchecker"
 
@@ -34,24 +35,13 @@ class _RejectingChecker:
         raise AuthenticationFailed("openrouter rejected the key")
 
 
-def _statement() -> dict[str, object]:
-    """One factual statement, as it is written on the wire."""
-    return {
-        "id": "s1",
-        "surroundingContext": "The paragraph around the claim.",
-        "statement": "Water boils at 100 C",
-        "classification": {"class": "fact", "confidence": 0.7},
-    }
-
-
 def _opinion() -> dict[str, object]:
     """One statement the run passes through without checking."""
-    return {
-        "id": "s2",
-        "surroundingContext": "The paragraph around the claim.",
-        "statement": "Water is the best drink",
-        "classification": {"class": "opinion", "confidence": 0.7},
-    }
+    return wire_statement(
+        id="s2",
+        statement="Water is the best drink",
+        classification={"class": "opinion", "confidence": 0.7},
+    )
 
 
 def _input_file(tmp_path: Path, payload: Mapping[str, object]) -> Path:
@@ -151,7 +141,9 @@ def test_a_handler_the_host_attached_is_left_where_it_is() -> None:
 
 def test_a_run_writes_the_output_payload_to_the_output_path(tmp_path: Path) -> None:
     """The round trip: a file of statements in, a file of rulings out, exit zero."""
-    input_path = _input_file(tmp_path, {"statements": [_statement(), _opinion()]})
+    input_path = _input_file(
+        tmp_path, {"statements": [wire_statement(id="s1"), _opinion()]}
+    )
     output_path = tmp_path / "rulings.json"
 
     assert _run(input_path, output_path) == 0
@@ -167,7 +159,7 @@ def test_a_run_writes_the_output_payload_to_the_output_path(tmp_path: Path) -> N
     assert datetime.fromisoformat(written["meta"]["startedAt"]).tzinfo is not None
     checked, skipped = written["statements"]
     assert checked["id"] == "s1"
-    assert checked["surroundingContext"] == _statement()["surroundingContext"]
+    assert checked["surroundingContext"] == wire_statement()["surroundingContext"]
     assert checked["ruling"]["verdict"] == "unverifiable"
     assert checked["error"] is None
     assert skipped["ruling"] is None
@@ -177,7 +169,7 @@ def test_the_payload_goes_to_the_file_and_only_diagnostics_to_the_streams(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Stdout stays empty, stderr carries the record, and neither holds the payload."""
-    input_path = _input_file(tmp_path, {"statements": [_statement()]})
+    input_path = _input_file(tmp_path, {"statements": [wire_statement(id="s1")]})
     output_path = tmp_path / "rulings.json"
 
     assert _run(input_path, output_path) == 0
@@ -191,7 +183,7 @@ def test_the_payload_goes_to_the_file_and_only_diagnostics_to_the_streams(
 
 def test_the_verbose_flag_raises_the_package_logger_to_debug(tmp_path: Path) -> None:
     """The flag reaches `configure_logging`, which is what the level proves."""
-    input_path = _input_file(tmp_path, {"statements": [_statement()]})
+    input_path = _input_file(tmp_path, {"statements": [wire_statement(id="s1")]})
 
     assert _run(input_path, tmp_path / "rulings.json", "--verbose") == 0
 
@@ -225,7 +217,9 @@ def test_an_unrecognised_class_value_exits_two_and_names_the_value(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A third label must stop the run rather than pass through unchecked."""
-    statement = _statement() | {"classification": {"class": "guess", "confidence": 0.7}}
+    statement = wire_statement(
+        id="s1", classification={"class": "guess", "confidence": 0.7}
+    )
     input_path = _input_file(tmp_path, {"statements": [statement]})
     output_path = tmp_path / "rulings.json"
 
@@ -249,7 +243,7 @@ def test_an_unreadable_input_path_exits_two(
 
 def test_a_repeated_identifier_from_inside_the_run_exits_two(tmp_path: Path) -> None:
     """`assign_ids` rejects this from inside `run_check`, past the parse."""
-    repeated = _statement() | {"id": "dup"}
+    repeated = wire_statement(id="dup")
     input_path = _input_file(tmp_path, {"statements": [repeated, dict(repeated)]})
     output_path = tmp_path / "rulings.json"
 
@@ -263,7 +257,7 @@ def test_a_statement_that_carries_an_error_still_exits_zero(
 ) -> None:
     """A payload exists, so the run succeeded; the failure is reported inside it."""
     monkeypatch.setattr(cli, "OfflineChecker", _FailingChecker)
-    input_path = _input_file(tmp_path, {"statements": [_statement()]})
+    input_path = _input_file(tmp_path, {"statements": [wire_statement(id="s1")]})
     output_path = tmp_path / "rulings.json"
 
     assert _run(input_path, output_path) == 0
@@ -280,7 +274,7 @@ def test_a_rejected_credential_exits_three_and_writes_no_output(
 ) -> None:
     """One credential failure fails every statement alike, so no payload exists."""
     monkeypatch.setattr(cli, "OfflineChecker", _RejectingChecker)
-    input_path = _input_file(tmp_path, {"statements": [_statement()]})
+    input_path = _input_file(tmp_path, {"statements": [wire_statement(id="s1")]})
     output_path = tmp_path / "rulings.json"
 
     assert _run(input_path, output_path) == 3
@@ -293,7 +287,7 @@ def test_an_unwritable_output_path_exits_four(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The check produced a payload, so only the write failed, and 2 would be a lie."""
-    input_path = _input_file(tmp_path, {"statements": [_statement()]})
+    input_path = _input_file(tmp_path, {"statements": [wire_statement(id="s1")]})
     output_path = tmp_path / "absent" / "rulings.json"
 
     assert _run(input_path, output_path) == 4
@@ -336,7 +330,7 @@ def test_a_quietening_log_level_cannot_swallow_the_credential_rejection(
     """The other fatal reason rides the same rule as the input rejection."""
     monkeypatch.setenv("LOG_LEVEL", "CRITICAL")
     monkeypatch.setattr(cli, "OfflineChecker", _RejectingChecker)
-    input_path = _input_file(tmp_path, {"statements": [_statement()]})
+    input_path = _input_file(tmp_path, {"statements": [wire_statement(id="s1")]})
     output_path = tmp_path / "rulings.json"
 
     assert _run(input_path, output_path) == 3

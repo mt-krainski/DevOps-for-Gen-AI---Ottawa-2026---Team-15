@@ -4,19 +4,24 @@ Takes statements that an upstream classifier has labelled `fact` or `opinion`. E
 statement is checked against what the web says about it, and comes back with a verdict and the
 sources behind it. Opinions pass through untouched.
 
+This document publishes the tool's contract: the input it reads, the output it writes, and the seam
+a checking agent plugs into. Every section below describes that contract. This build ships no
+checking agent, so nothing searches yet: every factual statement comes back `unverifiable` with a
+justification that says no search ran, no reference is cited, and `meta.model` reads `offline`.
+
 The tool reports what the evidence shows. It does not establish truth, and its vocabulary says so.
 
 ## Command line
 
 ```bash
-factchecker --input statements.json --output rulings.json
+uv run factchecker --input statements.json --output rulings.json
 ```
+
+Run it from `packages/factchecker/`, where the checks under Development are run too. Where the
+package is installed, the same command is on the path as `factchecker`.
 
 Both paths are required. `--input` names a JSON file holding the input described below, and
 `--output` names the file the rulings are written to. `--verbose` raises the log level to DEBUG.
-
-This build ships no checking agent. Every factual statement comes back `unverifiable` with a
-justification that says no search ran, and `meta.model` reads `offline`.
 
 ### Exit codes
 
@@ -29,6 +34,11 @@ A failed statement is a result the payload carries, so it leaves the exit code a
 other codes names a different reason no output file holds a payload: the input, the credential, or
 the write. An unexpected crash exits `1`, so a failed write has a code of its own rather than that
 one.
+
+### Limits
+
+A run checks eight statements at once. A check that is still running after 240 seconds is cancelled,
+and that statement comes back with a `timeout` error quoting the limit.
 
 ### Logging
 
@@ -64,8 +74,12 @@ One JSON object with a `statements` array. Field names are camelCase on the wire
 }
 ```
 
-`id` is optional. Where it is absent the tool assigns `s1`, `s2`, and so on, in input order. A
-supplied `id` passes through unchanged. An assigned `id` means nothing outside its own run.
+`id` is optional. Where it is absent the tool assigns `s1`, `s2`, and so on, by position in the
+input. A supplied `id` is used as it stands. An assigned `id` means nothing outside its own run.
+
+Identifiers must be unique across the payload, assigned and supplied alike. A supplied `s1` on the
+second statement therefore collides with the identifier the first statement was assigned, and the
+run exits `2` naming the repeated identifier.
 
 `surroundingContext` is required. It turns a claim that depends on its surroundings into a claim
 that can be searched.
@@ -88,10 +102,10 @@ one shape.
 ```json
 {
   "meta": {
-    "model": "<openrouter model slug>",
+    "model": "<model name>",
     "startedAt": "2026-08-22T14:03:11Z",
     "finishedAt": "2026-08-22T14:05:47Z",
-    "counts": { "total": 50, "checked": 31, "skipped": 19, "failed": 0 },
+    "counts": { "total": 50, "checked": 30, "skipped": 19, "failed": 1 },
     "usage": { "promptTokens": 184203, "completionTokens": 9877, "searches": 74 }
   },
   "statements": [
@@ -103,12 +117,23 @@ one shape.
       "ruling": {
         "verdict": "supported",
         "confidence": 0.92,
-        "justification": "At standard pressure water boils at 100C [1].",
+        "justification": "At standard pressure water boils at 100 C [1].",
         "references": [
           { "id": "1", "source": "https://...", "excerpt": "At 1 atm, water boils at 100 C" }
         ]
       },
       "error": null
+    },
+    {
+      "id": "s2",
+      "surroundingContext": "...",
+      "statement": "...",
+      "classification": { "class": "fact", "confidence": 0.9 },
+      "ruling": null,
+      "error": {
+        "kind": "timeout",
+        "message": "the check exceeded the per-statement limit of 240.0 seconds"
+      }
     }
   ]
 }
@@ -129,21 +154,49 @@ ISO 8601, which writes a zero UTC offset as `Z`.
 - `supported` — the evidence backs the claim.
 - `refuted` — the evidence contradicts the claim.
 - `mixed` — the claim is partly right, or the sources disagree with each other.
-- `unverifiable` — the search ran and the evidence does not settle the claim. In a build that ships
-  no checking agent, as this one does, no search runs and every factual statement comes back
-  `unverifiable`.
+- `unverifiable` — the search ran and the evidence does not settle the claim.
 
 `unverifiable` is a finding. A consumer that treats it as a failure misreads the output.
 
 `ruling.confidence` measures trust in the verdict, not the truth of the statement. An `unverifiable`
 verdict at high confidence says the tool is sure the claim cannot be settled this way.
 
+### Errors
+
+`error` carries two keys. `kind` names the failure from a fixed vocabulary, and `message` describes
+it in prose:
+
+- `timeout` — the check was still running at the per-statement limit.
+- `check_failed` — the checker raised.
+
+A checking agent may add kinds, so branch on the kinds you know and leave a default branch for the
+rest.
+
 ## References are not verified quotations
 
-The references come from the model. Nothing checks them against the text that was retrieved, so an
-excerpt may be a paraphrase rather than a quotation. This was accepted deliberately in exchange for
-speed. Read `source` as a pointer to follow, not as a promise that `excerpt` appears there word for
-word.
+The references come from the checker. Nothing compares them against the text that was retrieved, so
+an excerpt may be a paraphrase rather than a quotation. This was accepted deliberately in exchange
+for speed. Read `source` as a pointer to follow, not as a promise that `excerpt` appears there word
+for word.
+
+## The checker seam
+
+A checking agent plugs into one seam, `factchecker/checker.py`:
+
+- `StatementChecker` is the protocol a checking agent implements. Its one method, `check`, takes a
+  statement with its identifier already assigned and returns a `CheckOutcome`.
+- `CheckOutcome` carries the ruling and what producing it consumed: the prompt tokens, the
+  completion tokens, and the searches. The run adds those up into `meta.usage`.
+- `OfflineChecker` is the stand-in this build runs in place of a checking agent. It rules every
+  factual statement `unverifiable`, cites nothing, and reports no usage.
+
+The orchestrator holds an implementation to two rules:
+
+- An `AuthenticationFailed` raised from `check` ends the whole run, because a rejected credential
+  fails every statement alike. Any other exception becomes that one statement's `check_failed`
+  error, and the run carries on with the statements that are left.
+- A `check` still running at the per-statement limit is cancelled, and its statement comes back with
+  a `timeout` error.
 
 ## Development
 
@@ -154,6 +207,6 @@ uv run poe lint
 uv run poe test
 ```
 
-`lint` runs `ruff check` and `ruff format --check`. `test` runs the suite under coverage and prints
-the report. Continuous integration runs the same two commands on every pull request that touches
-this package.
+`lint` runs `ruff check` and `ruff format --check`. `test` runs the suite under coverage, and the
+coverage report fails where a line is not covered. Continuous integration runs the same two commands
+on every pull request that touches this package.
