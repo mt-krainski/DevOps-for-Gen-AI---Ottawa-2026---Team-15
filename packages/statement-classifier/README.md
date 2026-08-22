@@ -50,6 +50,7 @@ echo '{"paragraph": "The prime minister said talks had taken place with the Unit
 {
   "statements": [
     {
+      "surroundingContext": "The prime minister said talks had taken place with the United States over the past year, and accelerated in recent days. He suggested his team had been skeptical, but optimistic a deal could be reached.",
       "statement": "The prime minister said talks had taken place with the United States over the past year",
       "classification": {
         "class": "fact",
@@ -58,6 +59,7 @@ echo '{"paragraph": "The prime minister said talks had taken place with the Unit
       "error": null
     },
     {
+      "surroundingContext": "The prime minister said talks had taken place with the United States over the past year, and accelerated in recent days. He suggested his team had been skeptical, but optimistic a deal could be reached.",
       "statement": "and accelerated in recent days.",
       "classification": {
         "class": "fact",
@@ -66,6 +68,7 @@ echo '{"paragraph": "The prime minister said talks had taken place with the Unit
       "error": null
     },
     {
+      "surroundingContext": "The prime minister said talks had taken place with the United States over the past year, and accelerated in recent days. He suggested his team had been skeptical, but optimistic a deal could be reached.",
       "statement": "He suggested his team had been skeptical,",
       "classification": {
         "class": "fact",
@@ -74,6 +77,7 @@ echo '{"paragraph": "The prime minister said talks had taken place with the Unit
       "error": null
     },
     {
+      "surroundingContext": "The prime minister said talks had taken place with the United States over the past year, and accelerated in recent days. He suggested his team had been skeptical, but optimistic a deal could be reached.",
       "statement": "but optimistic a deal could be reached.",
       "classification": {
         "class": "opinion",
@@ -166,8 +170,8 @@ supplies. The shape is `classify`'s output, so either mode feeds the next stage:
 }
 ```
 
-That handoff holds as long as every statement classified. A statement whose classification failed
-carries `classification: null`, and the next stage rejects the whole payload over it.
+That handoff holds only while every statement classifies. A statement whose classification failed
+carries `classification: null`, which the next stage's input contract does not admit.
 
 ## Errors
 

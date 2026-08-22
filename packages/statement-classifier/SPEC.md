@@ -87,8 +87,8 @@ classification call already used as context. Echoing it makes paragraph output t
 
 `error` is kept, for the same per-statement-isolation reason as the original mode: one statement's
 classification failing (after retries) sets that item's `classification` to `null` and populates
-`error`, without discarding its siblings. That null is the one incompatibility surviving in both
-modes — the downstream stage requires the field, so it rejects the whole payload over it.
+`error`, without discarding its siblings. Either mode can emit that null, and the downstream
+input contract does not admit it.
 
 **Error handling**
 - One new batch-level code, `SEGMENTATION_ERROR`: the segmentation call failed on every attempt, or
