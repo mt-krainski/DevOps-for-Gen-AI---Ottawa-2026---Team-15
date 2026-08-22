@@ -10,7 +10,8 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from factchecker.cache import RunCache
 from factchecker.config import ConfigurationError, McpEndpoint, Settings
-from factchecker.resilience import describe_failure, with_retry
+from factchecker.errors import AuthenticationFailed
+from factchecker.resilience import classify, describe_failure, with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +57,13 @@ async def load_tools(
         releases what the connection holds.
 
     Raises:
-        ConfigurationError: The server could not be reached, or its catalogue is
-            missing one of the two tools. Either way the connection is released
-            before this is raised, and the message names the endpoint redacted.
+        AuthenticationFailed: The server rejected the token. This ends the run
+            rather than the statement, and the command spends the exit code that
+            means a credential was refused.
+        ConfigurationError: The server could not be reached for any other reason,
+            or its catalogue is missing one of the two tools. Either way the
+            connection is released before this is raised, and the message names the
+            endpoint redacted.
     """
     _redact_third_party_records()
     client = MultiServerMCPClient(
@@ -77,7 +82,7 @@ async def load_tools(
         # The cause is dropped rather than chained. It arrives from `httpx`, whose
         # message names the request URL, and the token travels inside that URL. This
         # is the one thing `McpEndpoint` cannot keep out of another library's text.
-        raise ConfigurationError(describe_failure(endpoint, failure)) from None
+        raise _connect_failure(endpoint, failure) from None
     missing = [name for name in _WANTED if name not in offered]
     if missing:
         await _release()
@@ -140,6 +145,29 @@ class _TokenRedaction(logging.Filter):
             rendered = traceback.format_exception(*record.exc_info)
             record.exc_text = _without_the_token("".join(rendered))
         return True
+
+
+def _connect_failure(endpoint: McpEndpoint, failure: BaseException) -> Exception:
+    """Read a failed connect as the operator action it asks for.
+
+    A rejected token and an absent one are different mistakes with different
+    remedies, and the command spends a different exit code on each: one says get a
+    new token, the other says fill the variable in. Both reach the command as
+    something raised out of this one call, so telling them apart is done here.
+
+    Args:
+        endpoint: The endpoint the connect was made against.
+        failure: What the connect raised.
+
+    Returns:
+        `AuthenticationFailed` where the server refused the credential, and
+        `ConfigurationError` for every other reason a connect fails. Each message
+        names the endpoint with the token redacted.
+    """
+    described = describe_failure(endpoint, failure)
+    if classify(failure) == "authentication":
+        return AuthenticationFailed(described)
+    return ConfigurationError(described)
 
 
 def _redact_third_party_records() -> None:

@@ -2,7 +2,7 @@
 
 No test here opens a connection. `load_tools` takes only an endpoint, so it has no
 injection seam of its own: these tests replace `MultiServerMCPClient` where the module
-holds it, which is the seam the command-line tests already use for `OfflineChecker`.
+holds it, which is the seam the command-line tests use for their collaborators too.
 The tools that stand in for the server's own are real `StructuredTool` objects built
 the way `langchain-mcp-adapters` 0.3.2 builds them: a JSON-schema `dict` for
 `args_schema`, and an answer returned as a list of LangChain content blocks.
@@ -354,7 +354,7 @@ def test_a_failure_to_connect_carries_no_token_out_of_load_tools(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """`httpx` names the request URL in its message, and that URL is the credential."""
-    original = _status_failure(401)
+    original = _status_failure(503)
     assert CREDENTIAL in str(original.exceptions[0])
     monkeypatch.setattr(
         tools, "MultiServerMCPClient", _client_offering(failing=original)
@@ -369,6 +369,52 @@ def test_a_failure_to_connect_carries_no_token_out_of_load_tools(
     assert CREDENTIAL not in caplog.text
     assert raised.value.__cause__ is None
     assert str(ENDPOINT) in str(raised.value)
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_token_the_server_refuses_at_load_time_is_an_authentication_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, status: int
+) -> None:
+    """A refused token is not a setup mistake, and the command must not report one.
+
+    An absent variable and a token the server will not take ask for different
+    things of an operator. The command spends a different exit code on each, and
+    this is the seam that decides which one a failed connect reaches.
+    """
+    original = _status_failure(status)
+    assert CREDENTIAL in str(original.exceptions[0])
+    monkeypatch.setattr(
+        tools, "MultiServerMCPClient", _client_offering(failing=original)
+    )
+
+    with pytest.raises(AuthenticationFailed) as raised:
+        asyncio.run(load_tools(ENDPOINT))
+
+    assert str(raised.value) == f"the MCP server at {ENDPOINT} returned {status}"
+    rendered = "".join(traceback.format_exception(raised.value))
+    assert CREDENTIAL not in rendered
+    assert CREDENTIAL not in caplog.text
+    assert raised.value.__cause__ is None
+
+
+def test_a_refused_token_releases_before_it_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run ends here, so the connection must not be left open behind it."""
+    monkeypatch.setattr(
+        tools, "MultiServerMCPClient", _client_offering(failing=_status_failure(401))
+    )
+    released: list[str] = []
+
+    async def _watched_release() -> None:
+        released.append("released")
+
+    monkeypatch.setattr(tools, "_release", _watched_release)
+
+    with pytest.raises(AuthenticationFailed):
+        asyncio.run(load_tools(ENDPOINT))
+
+    assert released == ["released"]
 
 
 def test_the_rejected_catalogue_names_the_endpoint_redacted(
