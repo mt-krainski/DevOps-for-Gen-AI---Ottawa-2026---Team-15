@@ -48,6 +48,28 @@ PAGE_SCHEMA = {
 }
 SCHEMAS = {SEARCH_TOOL_NAME: SEARCH_SCHEMA, PAGE_TOOL_NAME: PAGE_SCHEMA}
 
+# The two catalogues as Bright Data publishes them, with the arguments beyond the
+# one this package allows. `country` and the rest are what the run cache cannot key
+# on, so an instrumented tool must not offer them.
+WIDE_SEARCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "description": "what to ask the search engine"},
+        "country": {"type": "string"},
+        "num_results": {"type": "integer"},
+    },
+    "required": ["query"],
+}
+WIDE_PAGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "url": {"type": "string", "description": "the page to read"},
+        "data_format": {"type": "string"},
+    },
+    "required": ["url"],
+}
+WIDE_SCHEMAS = {SEARCH_TOOL_NAME: WIDE_SEARCH_SCHEMA, PAGE_TOOL_NAME: WIDE_PAGE_SCHEMA}
+
 
 def _blocks(*texts: str) -> list[dict[str, str]]:
     """An answer in the shape the MCP adapter returns one: LangChain content blocks."""
@@ -97,7 +119,10 @@ class _Clock:
 
 
 def _tool(
-    name: str, server: _Server, metadata: dict[str, object] | None = None
+    name: str,
+    server: _Server,
+    metadata: dict[str, object] | None = None,
+    schema: dict[str, object] | None = None,
 ) -> BaseTool:
     """A tool of the given name, answered by the given server.
 
@@ -113,7 +138,7 @@ def _tool(
     return StructuredTool(
         name=name,
         description=f"the {name} tool",
-        args_schema=SCHEMAS.get(name, SEARCH_SCHEMA),
+        args_schema=schema or SCHEMAS.get(name, SEARCH_SCHEMA),
         metadata=metadata,
         coroutine=call,
     )
@@ -412,15 +437,47 @@ def test_a_failure_to_connect_names_the_status_the_server_returned(
     assert str(raised.value) == f"the MCP server at {ENDPOINT} returned 500"
 
 
-def test_an_instrumented_tool_keeps_its_name_description_and_schema() -> None:
-    """The agent chooses tools by what they say they are, so none of that may move."""
+def test_an_instrumented_tool_keeps_its_name_and_its_description() -> None:
+    """The agent chooses tools by what they say they are, so neither may move."""
     original = _tool(SEARCH_TOOL_NAME, _Server())
 
     (wrapped,) = instrument([original], RunCache(), _settings(), _Clock())
 
     assert wrapped.name == original.name
     assert wrapped.description == original.description
-    assert wrapped.args_schema == original.args_schema
+
+
+@pytest.mark.parametrize(
+    ("name", "kept"), [(SEARCH_TOOL_NAME, "query"), (PAGE_TOOL_NAME, "url")]
+)
+def test_an_instrumented_tool_offers_only_the_argument_the_agent_may_send(
+    name: str, kept: str
+) -> None:
+    """The cache constraint is written into the schema rather than asked for in prose.
+
+    The run cache keys a search on its query and a page on its URL. Every other
+    argument the server publishes is forwarded unkeyed, so two calls that differ only
+    in one of those return the first one's cached answer. Offering the agent one
+    argument is what stops it asking for the others.
+    """
+    original = _tool(name, _Server(), schema=WIDE_SCHEMAS[name])
+
+    (wrapped,) = instrument([original], RunCache(), _settings(), _Clock())
+
+    assert wrapped.args_schema == {
+        "type": "object",
+        "properties": {kept: WIDE_SCHEMAS[name]["properties"][kept]},
+        "required": [kept],
+    }
+
+
+def test_narrowing_the_schema_leaves_the_servers_own_schema_untouched() -> None:
+    """The narrowed copy is this package's; the entry itself belongs to the server."""
+    original = _tool(SEARCH_TOOL_NAME, _Server(), schema=dict(WIDE_SEARCH_SCHEMA))
+
+    instrument([original], RunCache(), _settings(), _Clock())
+
+    assert original.args_schema == WIDE_SEARCH_SCHEMA
 
 
 def test_an_instrumented_tool_keeps_the_annotations_the_server_published() -> None:

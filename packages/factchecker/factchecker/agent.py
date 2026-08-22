@@ -41,6 +41,46 @@ _BUDGET_SPENT = (
 )
 
 
+def _closed(node: object) -> object:
+    """Close every object in a JSON schema to the properties it names.
+
+    A strict `response_format` obliges the schema to say `additionalProperties:
+    false` at every level, and `model_json_schema` writes none of that. The OpenAI
+    client does it for a `response_format` given as a class; a schema document is
+    passed to the gateway as written, so it is done here.
+
+    Args:
+        node: A schema, or any part of one.
+
+    Returns:
+        The same schema, with every object in it closed. The argument is left as it
+        was.
+    """
+    if isinstance(node, dict):
+        closed = {key: _closed(value) for key, value in node.items()}
+        if closed.get("type") == "object":
+            closed["additionalProperties"] = False
+        return closed
+    if isinstance(node, list):
+        return [_closed(one) for one in node]
+    return node
+
+
+# The ruling schema as a document rather than as the `Ruling` class. Given the class,
+# `openai` 3.3.1 validates the response body itself, and a malformed ruling raises a
+# `ValidationError` out of `ainvoke` — inside `_turn`, where `_ruled`'s retry cannot
+# reach it. Given a document, `has_rich_response_format` is false, the SDK parses no
+# content, and the malformed answer arrives as a message this package can act on.
+_RULING_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": Ruling.__name__,
+        "strict": True,
+        "schema": _closed(Ruling.model_json_schema()),
+    },
+}
+
+
 @dataclass
 class _Run:
     """One statement's conversation, and what that statement has spent so far.
@@ -74,6 +114,14 @@ class AgentChecker:
         trusted the gateway would break the moment somebody switched models to save
         money.
 
+        Nothing is said about strictness, which leaves `langchain-openai` 1.6.0 to
+        convert every tool strictly, as a `response_format` in the payload obliges it
+        to: `openai` 3.3.1 refuses to send a request carrying a tool that is not
+        strict, and refuses it before any request goes out. Strictness rewrites a
+        tool's `required` to list every property it offers, which is a rewrite with
+        nothing to do here, because `instrument` already narrowed each tool to the one
+        argument it requires.
+
         Args:
             model: The chat model, with nothing bound to it yet.
             tools: The instrumented Bright Data tools. They already carry the run's
@@ -81,13 +129,7 @@ class AgentChecker:
                 per-statement state, so one set serves every statement of a run.
             settings: The run's settings. This class reads the tool-call budget.
         """
-        # `strict=False` is what keeps the tools' own schemas intact. Given a
-        # `response_format` and no `strict`, `langchain-openai` 1.6.0 converts every
-        # tool with `strict=True`, and that conversion rewrites `required` to list
-        # every property. Bright Data's search tool would then oblige the model to
-        # supply `country` and the rest on every call, and the run cache keys a search
-        # on its query alone.
-        self._model = model.bind_tools(tools, response_format=Ruling, strict=False)
+        self._model = model.bind_tools(tools, response_format=_RULING_RESPONSE_FORMAT)
         self._tools = {tool.name: tool for tool in tools}
         self._settings = settings
 
@@ -178,6 +220,15 @@ class AgentChecker:
     async def _answered(self, call: ToolCall) -> ToolMessage:
         """Run one tool call, or say why it could not be run.
 
+        A model that invents a tool name and a model that invents an argument are
+        making the same mistake, so both are answered in writing and the model spends
+        another of its calls getting it right.
+
+        A `TypeError` is what an invented argument comes back as. The tool layer turns
+        every failure of the call itself into an `McpCallError`, so the only failure
+        left that a wrapper's own signature can raise is a set of arguments that will
+        not bind to it.
+
         A failure the tool layer raises travels on untouched. `AuthenticationFailed`
         ends the whole run and `McpCallError` ends this statement, which is what the
         tool layer already decided a permanent failure means.
@@ -191,7 +242,17 @@ class AgentChecker:
                 ),
                 tool_call_id=call["id"],
             )
-        return await tool.ainvoke(call)
+        try:
+            return await tool.ainvoke(call)
+        except TypeError:
+            return ToolMessage(
+                content=(
+                    f"This call was not made: {call['name']} cannot be called with "
+                    f"those arguments. It takes {' and '.join(tool.args)}, spelled "
+                    "exactly that way, and nothing else."
+                ),
+                tool_call_id=call["id"],
+            )
 
     async def _ruled(self, run: _Run, answer: AIMessage) -> Ruling:
         """Read the ruling out of the model's answer, allowing one try at fixing it.

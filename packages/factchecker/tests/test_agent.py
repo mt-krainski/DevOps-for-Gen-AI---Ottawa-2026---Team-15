@@ -1,13 +1,20 @@
 """Tests for the searching agent in `factchecker.agent`.
 
-No test here reaches OpenRouter or Bright Data. The model is a scripted stand-in that
-answers a turn at a time and records what it was asked, and the tools are real
+No test here reaches OpenRouter or Bright Data. Most drive a scripted stand-in model
+that answers a turn at a time and records what it was asked, over real
 `StructuredTool` objects built the way `instrument` builds them: a JSON-schema `dict`
 for `args_schema`, and an answer returned as text.
 
 The scripts are keyed on the claim rather than on call order, which is what lets one
 `AgentChecker` serve two statements at once in the concurrency test while each keeps
 its own place in its own script.
+
+A stand-in model cannot see what the real client does with what the checker bound to
+it, and the two things that path gets wrong — a tool the OpenAI SDK refuses to send,
+and a ruling the SDK parses before this package can — both raise inside the client
+rather than in this package. So the tests at the end of this file drive a real
+`ChatOpenAI` over an `httpx.MockTransport`. That exercises payload construction, tool
+validation, response parsing and the usage object, and it opens no socket.
 """
 
 import asyncio
@@ -16,6 +23,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Self
 
+import httpx
 import pytest
 from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessage
 from langchain_core.messages.tool import tool_call
@@ -24,12 +32,13 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from factchecker.agent import MALFORMED_RULING, AgentChecker
+from factchecker.cache import RunCache
 from factchecker.checker import StatementChecker
-from factchecker.config import McpEndpoint, Settings
+from factchecker.config import OPENROUTER_BASE_URL, McpEndpoint, Settings
 from factchecker.errors import AuthenticationFailed, CheckFailed, McpCallError
 from factchecker.models import IdentifiedStatement, InputPayload, Ruling
 from factchecker.run import RunSettings, run_check
-from factchecker.tools import PAGE_TOOL_NAME, SEARCH_TOOL_NAME
+from factchecker.tools import PAGE_TOOL_NAME, SEARCH_TOOL_NAME, instrument
 from tests.conftest import wire_statement
 
 CLAIM = "Water boils at 100 C"
@@ -47,6 +56,24 @@ PAGE_SCHEMA = {
     "properties": {"url": {"type": "string"}},
     "required": ["url"],
 }
+
+# The two catalogue entries as Bright Data publishes them. The arguments past the
+# first are the ones the run cache cannot key on.
+SERVER_SEARCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string"},
+        "country": {"type": "string"},
+        "num_results": {"type": "integer"},
+    },
+    "required": ["query"],
+}
+SERVER_PAGE_SCHEMA = {
+    "type": "object",
+    "properties": {"url": {"type": "string"}, "data_format": {"type": "string"}},
+    "required": ["url"],
+}
+MALFORMED_ANSWER = "verdict: probably true"
 
 
 def _ruling_text(verdict: str = "supported", justification: str = "Agreed [1].") -> str:
@@ -191,6 +218,120 @@ def _settings(tool_call_budget: int = 10) -> Settings:
     )
 
 
+async def _no_sleep(seconds: float) -> None:
+    """Wait none of the backoff a retry would otherwise sleep through."""
+
+
+def _real_tools(answer: str = "one result") -> list[BaseTool]:
+    """The two tools as `instrument` builds them, over a server that always answers.
+
+    These carry the real wrappers, so a call whose arguments do not fit meets the
+    real signature rather than a fake that accepts anything.
+    """
+
+    async def call(**arguments: object) -> list[dict[str, str]]:
+        return [{"type": "text", "text": answer}]
+
+    published = [
+        StructuredTool(
+            name=SEARCH_TOOL_NAME,
+            description=f"the {SEARCH_TOOL_NAME} tool",
+            args_schema=SERVER_SEARCH_SCHEMA,
+            coroutine=call,
+        ),
+        StructuredTool(
+            name=PAGE_TOOL_NAME,
+            description=f"the {PAGE_TOOL_NAME} tool",
+            args_schema=SERVER_PAGE_SCHEMA,
+            coroutine=call,
+        ),
+    ]
+    return instrument(published, RunCache(), _settings(), _no_sleep)
+
+
+def _wire_tool_call(name: str, **arguments: object) -> dict[str, object]:
+    """A tool call as a gateway writes one: the arguments as a JSON string."""
+    return {
+        "id": f"call_{name}",
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments)},
+    }
+
+
+class _Gateway:
+    """OpenRouter's chat-completions endpoint, answered from a script over `httpx`.
+
+    An answer is the text the model wrote, or the tool calls it asked for. Every
+    request body is kept, so a test reads what the pinned client really put on the
+    wire. The last answer stands for every request after it, which is what lets a
+    model that never rules be written as one malformed answer.
+    """
+
+    def __init__(
+        self,
+        *answers: str | list[dict[str, object]],
+        prompt: int = 11,
+        completion: int = 22,
+    ) -> None:
+        self.answers = answers
+        self.prompt = prompt
+        self.completion = completion
+        self.sent: list[dict[str, object]] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Record the body and answer the next line of the script."""
+        self.sent.append(json.loads(request.content))
+        answer = self.answers[min(len(self.sent) - 1, len(self.answers) - 1)]
+        asked = isinstance(answer, list)
+        message = (
+            {"role": "assistant", "content": None, "tool_calls": answer}
+            if asked
+            else {"role": "assistant", "content": answer}
+        )
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "google/gemma-4-31b-it",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": message,
+                        "finish_reason": "tool_calls" if asked else "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": self.prompt,
+                    "completion_tokens": self.completion,
+                    "total_tokens": self.prompt + self.completion,
+                },
+            },
+        )
+
+    def model(self) -> ChatOpenAI:
+        """The real client this package builds, pointed at this transport.
+
+        The key is a literal that no service would accept, and no request leaves the
+        process to find out.
+        """
+        return ChatOpenAI(
+            model="google/gemma-4-31b-it",
+            base_url=OPENROUTER_BASE_URL,
+            api_key=SecretStr("not-a-real-key"),
+            http_async_client=httpx.AsyncClient(transport=httpx.MockTransport(self)),
+        )
+
+    def tool_named(self, name: str) -> dict[str, object]:
+        """The first request's entry for the named tool, as it went on the wire."""
+        return next(
+            one["function"]
+            for one in self.sent[0]["tools"]
+            if one["function"]["name"] == name
+        )
+
+
 def _statement(claim: str = CLAIM, identifier: str = "s1") -> IdentifiedStatement:
     """One identified statement, whose context names only its own claim.
 
@@ -238,14 +379,26 @@ def test_the_agent_checker_satisfies_the_statement_checker_protocol() -> None:
 
 
 def test_the_model_is_bound_to_the_tools_and_the_ruling_schema() -> None:
-    """Binding happens once, in the constructor, and not per statement."""
+    """Binding happens once, in the constructor, and not per statement.
+
+    The ruling schema is bound as a schema document rather than as the `Ruling` class.
+    Given the class, the OpenAI client parses the answer itself and a malformed one
+    raises out of `ainvoke`, where the retry this package owns cannot reach it.
+    """
     model = _Model({CLAIM: [_ai(_ruling_text())]})
     tools = _Tools()
 
     AgentChecker(model, tools.tools, _settings())
 
     assert model.bound["tools"] == tools.tools
-    assert model.bound["response_format"] is Ruling
+    response_format = model.bound["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["name"] == "Ruling"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["schema"]["required"] == list(
+        Ruling.model_fields
+    )
+    assert "strict" not in model.bound
 
 
 def test_a_check_that_searches_once_returns_the_ruling_and_what_it_cost() -> None:
@@ -432,6 +585,39 @@ def test_a_call_to_a_tool_that_does_not_exist_is_answered_rather_than_raised() -
     assert SEARCH_TOOL_NAME in str(answered.content)
 
 
+@pytest.mark.parametrize("arguments", [{}, {"queries": ["boiling"]}])
+def test_a_call_whose_arguments_do_not_fit_is_answered_rather_than_raised(
+    arguments: dict[str, object],
+) -> None:
+    """A hallucinated argument costs a call and a correction, not the statement.
+
+    A hallucinated tool *name* is already answered in writing. The same mistake one
+    field over reaches the wrapper's own signature, because a `StructuredTool` on a
+    JSON-schema `args_schema` validates no input, and the `TypeError` there would
+    leave `check` and end the statement as `check_failed`.
+    """
+    model = _Model(
+        {
+            CLAIM: [
+                _ai(
+                    tool_calls=[
+                        tool_call(name=SEARCH_TOOL_NAME, args=arguments, id="c1")
+                    ]
+                ),
+                _ai(_ruling_text()),
+            ]
+        }
+    )
+    checker = AgentChecker(model, _real_tools(), _settings())
+
+    outcome = asyncio.run(checker.check(_statement()))
+
+    assert outcome.ruling.verdict == "supported"
+    answered = model.turns_about(CLAIM)[-1][-2]
+    assert isinstance(answered, ToolMessage)
+    assert "query" in str(answered.content)
+
+
 def test_a_malformed_ruling_is_retried_once_with_the_validation_error() -> None:
     """The model is shown what it got wrong, so its second try can be different."""
     model = _Model({CLAIM: [_ai("verdict: probably true"), _ai(_ruling_text())]})
@@ -548,39 +734,100 @@ def test_every_tool_call_is_answered_before_the_next_turn_is_sent() -> None:
     assert [_unanswered(turn) for turn in model.turns_about(CLAIM)] == [[], [], []]
 
 
-def test_binding_leaves_the_tools_own_argument_schemas_alone() -> None:
-    """A tool's optional argument must stay optional once the model is bound.
+def test_the_request_the_real_client_sends_carries_strict_one_argument_tools() -> None:
+    """What the wire carries is the only thing the gateway ever sees.
 
-    Asked for a `response_format` and told nothing about strictness,
-    `langchain-openai` 1.6.0 converts every tool strictly, and that conversion moves
-    each optional argument into `required`. Bright Data's search tool would then
-    oblige the model to supply a `country` on every call, and the run cache keys a
-    search on its query alone. This builds the real client, offline, and reads what
-    the binding produced.
+    Two facts about the pinned client meet here. A `response_format` in the payload
+    routes the request through the OpenAI SDK's parsing path, which refuses to send
+    any tool that is not strict. And strictness rewrites `required` to list every
+    property, which would oblige the model to supply the arguments the run cache
+    cannot key on. Both hold together only because `instrument` already narrowed each
+    tool to one argument, so the rewrite has nothing left to add.
     """
-    schema = {
-        "type": "object",
-        "properties": {"query": {"type": "string"}, "country": {"type": "string"}},
-        "required": ["query"],
-    }
+    gateway = _Gateway(_ruling_text())
+    checker = AgentChecker(gateway.model(), _real_tools(), _settings())
 
-    async def run(**arguments: object) -> str:
-        raise AssertionError("no test calls the tool")
+    asyncio.run(checker.check(_statement()))
 
-    tool = StructuredTool(
-        name=SEARCH_TOOL_NAME, description="d", args_schema=schema, coroutine=run
+    search = gateway.tool_named(SEARCH_TOOL_NAME)
+    page = gateway.tool_named(PAGE_TOOL_NAME)
+    assert search["strict"] is True
+    assert page["strict"] is True
+    assert search["parameters"]["required"] == ["query"]
+    assert page["parameters"]["required"] == ["url"]
+    assert list(search["parameters"]["properties"]) == ["query"]
+    assert gateway.sent[0]["response_format"]["json_schema"]["name"] == "Ruling"
+
+
+def test_a_malformed_answer_from_the_real_client_reaches_the_retry() -> None:
+    """The SDK hands the malformed text over rather than raising on it.
+
+    Bound the `Ruling` class, the SDK validates the body itself and a `ValidationError`
+    leaves `ainvoke` before this package sees the answer. Bound a schema document, the
+    answer arrives as a message and the correction turn happens.
+    """
+    gateway = _Gateway(MALFORMED_ANSWER, _ruling_text())
+    checker = AgentChecker(gateway.model(), _real_tools(), _settings())
+
+    outcome = asyncio.run(checker.check(_statement()))
+
+    assert outcome.ruling.verdict == "supported"
+    assert len(gateway.sent) == 2
+    correction = str(gateway.sent[1]["messages"][-2]["content"])
+    assert "not a valid ruling" in correction
+    assert MALFORMED_ANSWER in correction
+
+
+def test_a_second_malformed_answer_from_the_real_client_fails_by_its_own_kind() -> None:
+    """The kind the brief calls likeliest is the one that has to be reachable."""
+    gateway = _Gateway(MALFORMED_ANSWER)
+    checker = AgentChecker(gateway.model(), _real_tools(), _settings())
+
+    with pytest.raises(CheckFailed) as raised:
+        asyncio.run(checker.check(_statement()))
+
+    assert raised.value.kind == MALFORMED_RULING
+    assert MALFORMED_ANSWER not in raised.value.message
+
+
+def test_a_whole_check_runs_over_the_real_client_from_tool_call_to_ruling() -> None:
+    """The one path a stand-in model cannot reach: a strict tool call, on the wire.
+
+    A strict tool is a tool whose call arguments the OpenAI SDK parses on the way
+    back, so a tool this package narrowed is one the SDK is asked to read. The search
+    runs, its text goes back as a tool message, and the ruling follows on the second
+    turn with both turns' tokens counted.
+    """
+    gateway = _Gateway(
+        [_wire_tool_call(SEARCH_TOOL_NAME, query="boiling point of water")],
+        _ruling_text(),
+        prompt=100,
+        completion=10,
     )
-    model = ChatOpenAI(
-        model="google/gemma-4-31b-it",
-        base_url="https://openrouter.ai/api/v1",
-        api_key=SecretStr("not-a-real-key"),
-    )
+    checker = AgentChecker(gateway.model(), _real_tools(), _settings())
 
-    checker = AgentChecker(model, [tool], _settings())
+    outcome = asyncio.run(checker.check(_statement()))
 
-    bound = checker._model.kwargs
-    assert bound["tools"][0]["function"]["parameters"]["required"] == ["query"]
-    assert bound["response_format"] is Ruling
+    assert outcome.ruling.verdict == "supported"
+    assert outcome.searches == 1
+    assert outcome.prompt_tokens == 200
+    assert outcome.completion_tokens == 20
+    answered = gateway.sent[1]["messages"][-2]
+    assert answered["role"] == "tool"
+    assert answered["content"] == "one result"
+
+
+def test_a_well_formed_answer_from_the_real_client_reports_what_it_billed() -> None:
+    """The counts come off the gateway's own usage object, through the real client."""
+    gateway = _Gateway(_ruling_text(), prompt=317, completion=64)
+    checker = AgentChecker(gateway.model(), _real_tools(), _settings())
+
+    outcome = asyncio.run(checker.check(_statement()))
+
+    assert outcome.ruling.verdict == "supported"
+    assert outcome.prompt_tokens == 317
+    assert outcome.completion_tokens == 64
+    assert outcome.searches == 0
 
 
 def test_a_statements_search_count_is_its_own_while_another_runs_beside_it() -> None:

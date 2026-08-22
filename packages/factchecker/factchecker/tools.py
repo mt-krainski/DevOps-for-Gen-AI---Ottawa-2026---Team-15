@@ -18,6 +18,9 @@ SEARCH_TOOL_NAME = "search_engine"
 PAGE_TOOL_NAME = "scrape_as_markdown"
 TRUNCATION_MARKER = "\n\n[truncated: page exceeded the character ceiling]"
 
+_SEARCH_ARGUMENT = "query"
+_PAGE_ARGUMENT = "url"
+
 _WANTED = (SEARCH_TOOL_NAME, PAGE_TOOL_NAME)
 _SERVER_NAME = "brightdata"
 _BLOCK_SEPARATOR = "\n\n"
@@ -106,8 +109,9 @@ def instrument(
         sleep: Waits the number of seconds it is given, between retries.
 
     Returns:
-        One instrumented tool per tool given, keeping each tool's name, description
-        and argument schema so that the agent chooses between them as before.
+        One instrumented tool per tool given, keeping each tool's name and
+        description so that the agent chooses between them as before, and offering
+        the one argument the run cache keys on.
     """
     return [_instrumented(tool, cache, settings, sleep) for tool in tools]
 
@@ -184,24 +188,58 @@ def _instrumented(
 ) -> BaseTool:
     """Rebuild one tool around the wrapper that guards it.
 
-    Name, description, argument schema and metadata all come across, because the
-    agent reads all four to choose between tools and the adapter puts the server's
-    tool annotations in the last of them. `response_format` does not come across: the
-    original answers with content beside an artifact, and the wrapper answers with
-    the text it read out of that content.
+    Name, description and metadata all come across, because the agent reads them to
+    choose between tools and the adapter puts the server's tool annotations in the
+    last of them. `response_format` does not come across: the original answers with
+    content beside an artifact, and the wrapper answers with the text it read out of
+    that content. The argument schema is narrowed rather than copied, by `_narrowed`.
     """
+    reads_a_page = tool.name == PAGE_TOOL_NAME
     run = (
         _page_reader(tool, cache, settings, sleep)
-        if tool.name == PAGE_TOOL_NAME
+        if reads_a_page
         else _searcher(tool, cache, settings, sleep)
     )
     return StructuredTool(
         name=tool.name,
         description=tool.description,
-        args_schema=tool.args_schema,
+        args_schema=_narrowed(
+            tool.args_schema, _PAGE_ARGUMENT if reads_a_page else _SEARCH_ARGUMENT
+        ),
         metadata=tool.metadata,
         coroutine=run,
     )
+
+
+def _narrowed(published: dict[str, object], kept: str) -> dict[str, object]:
+    """Offer the agent the one argument the run cache keys on, and no other.
+
+    The cache keys a search on its query and a page on its URL, and forwards every
+    further argument unkeyed. Two calls differing only in one of those would return
+    the first one's cached answer, so the agent must never send them.
+
+    Narrowing here rather than asking for it in the system prompt makes the
+    constraint structural: the model is not told to leave `country` alone, it is
+    never offered a `country`. It also keeps the binding honest. A tool bound beside
+    a `response_format` is converted strictly, and that conversion rewrites
+    `required` to list every property — a rewrite that adds nothing once the only
+    property is the required one.
+
+    The kept property comes across as the server wrote it, description and all, and
+    the server's own schema is left as it was.
+
+    Args:
+        published: The argument schema the server published for this tool.
+        kept: The one argument the agent may send.
+
+    Returns:
+        A schema offering that argument alone, and requiring it.
+    """
+    return {
+        "type": "object",
+        "properties": {kept: published["properties"][kept]},
+        "required": [kept],
+    }
 
 
 def _searcher(
