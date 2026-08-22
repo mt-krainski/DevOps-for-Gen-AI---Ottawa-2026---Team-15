@@ -3,11 +3,17 @@
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from statement_classifier.config import DEFAULT_CONCURRENCY
 from statement_classifier.errors import ClassifierError, ErrorCode
-from statement_classifier.service import classify_statements_sync
+from statement_classifier.models import ClassifierOutput, ParagraphClassifierOutput
+from statement_classifier.service import (
+    classify_paragraph_sync,
+    classify_statements_sync,
+)
 
 EXIT_SUCCESS = 0
 EXIT_INTERNAL_ERROR = 1
@@ -30,29 +36,41 @@ class _JsonErrorArgumentParser(argparse.ArgumentParser):
         raise SystemExit(EXIT_INVALID_INPUT)
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    parser = _JsonErrorArgumentParser(prog="statement-classifier")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    classify_parser = subparsers.add_parser(
-        "classify", help="Classify a batch of statements as fact or opinion"
-    )
-    classify_parser.add_argument(
+def _add_io_arguments(subparser: argparse.ArgumentParser) -> None:
+    subparser.add_argument(
         "--input",
         default="-",
         help="Input JSON file path, or '-' for stdin (default: stdin)",
     )
-    classify_parser.add_argument(
+    subparser.add_argument(
         "--output",
         default="-",
         help="Output JSON file path, or '-' for stdout (default: stdout)",
     )
-    classify_parser.add_argument(
+    subparser.add_argument(
         "--concurrency",
         type=int,
         default=DEFAULT_CONCURRENCY,
         help="Max concurrent LLM calls (default: %(default)s)",
     )
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = _JsonErrorArgumentParser(prog="statement-classifier")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    classify_parser = subparsers.add_parser(
+        "classify",
+        help="Classify a batch of pre-split statements as fact or opinion",
+    )
+    _add_io_arguments(classify_parser)
+
+    classify_paragraph_parser = subparsers.add_parser(
+        "classify-paragraph",
+        help="Split a paragraph into statements and classify each as fact or opinion",
+    )
+    _add_io_arguments(classify_paragraph_parser)
+
     return parser
 
 
@@ -74,7 +92,10 @@ def _write_error(code: ErrorCode, message: str) -> None:
     sys.stderr.write("\n")
 
 
-def _run_classify(args: argparse.Namespace) -> int:
+def _run(
+    args: argparse.Namespace,
+    sync_fn: Callable[..., ClassifierOutput | ParagraphClassifierOutput],
+) -> int:
     try:
         raw = _read_input(args.input)
     except (OSError, UnicodeDecodeError) as exc:
@@ -82,13 +103,13 @@ def _run_classify(args: argparse.Namespace) -> int:
         return EXIT_INTERNAL_ERROR
 
     try:
-        payload = json.loads(raw)
+        payload: Any = json.loads(raw)
     except json.JSONDecodeError as exc:
         _write_error(ErrorCode.INVALID_INPUT, f"Invalid JSON: {exc}")
         return EXIT_INVALID_INPUT
 
     try:
-        output = classify_statements_sync(payload, concurrency=args.concurrency)
+        output = sync_fn(payload, concurrency=args.concurrency)
     except ClassifierError as exc:
         _write_error(exc.code, exc.message)
         return _EXIT_CODES_BY_ERROR.get(exc.code, EXIT_INTERNAL_ERROR)
@@ -117,7 +138,10 @@ def main(argv: list[str] | None = None) -> int:
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else EXIT_INVALID_INPUT
-    return _run_classify(args)
+
+    if args.command == "classify-paragraph":
+        return _run(args, classify_paragraph_sync)
+    return _run(args, classify_statements_sync)
 
 
 def run() -> None:

@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 from statement_classifier.errors import ErrorCode
@@ -58,3 +58,32 @@ class ClassifierInput(_WireModel):
 
 class ClassifierOutput(_WireModel):
     statements: list[ClassifiedStatement]
+
+
+class ParagraphInput(_WireModel):
+    """Paragraph mode's input: raw text this package splits itself."""
+
+    paragraph: str = Field(min_length=1)
+
+    @field_validator("paragraph")
+    @classmethod
+    def _reject_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("paragraph must not be empty or whitespace-only")
+        return value
+
+
+class ParagraphClassifiedStatement(_WireModel):
+    """A statement this package extracted from the paragraph, now classified.
+
+    No `surroundingContext`: the paragraph was the caller's input, not
+    per-statement data worth echoing back.
+    """
+
+    statement: str
+    classification: Classification | None = None
+    error: StatementError | None = None
+
+
+class ParagraphClassifierOutput(_WireModel):
+    statements: list[ParagraphClassifiedStatement]
