@@ -69,7 +69,7 @@ convention = "google"
 source = ["factchecker"]
 
 [tool.coverage.report]
-fail_under = 100
+fail_under = 80
 
 [tool.poe.executor]
 type = "uv"

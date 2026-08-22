@@ -207,5 +207,5 @@ uv run poe test
 ```
 
 `lint` runs `ruff check` and `ruff format --check`. `test` runs the suite under coverage, and the
-coverage report fails where a line is not covered. Continuous integration runs the same two commands
-on every pull request that touches this package.
+coverage report fails below 80 percent. Continuous integration runs the same two commands on every
+pull request that touches this package.
