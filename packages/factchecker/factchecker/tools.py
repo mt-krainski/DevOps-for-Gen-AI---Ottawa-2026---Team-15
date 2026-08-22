@@ -1,6 +1,8 @@
 """The two Bright Data tools a run spends its budget on, and the guards around them."""
 
 import logging
+import re
+import traceback
 from collections.abc import Awaitable, Callable, Sequence
 
 from langchain_core.tools import BaseTool, StructuredTool
@@ -8,7 +10,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from factchecker.cache import RunCache
 from factchecker.config import ConfigurationError, McpEndpoint, Settings
-from factchecker.resilience import with_retry
+from factchecker.resilience import describe_failure, with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,14 @@ _WANTED = (SEARCH_TOOL_NAME, PAGE_TOOL_NAME)
 _SERVER_NAME = "brightdata"
 _BLOCK_SEPARATOR = "\n\n"
 
+# The loggers of the pinned stack that write a request URL, named one by one because a
+# filter runs only for the records its own logger emits: a record from a child reaches
+# an ancestor's handlers without ever meeting that ancestor's filters.
+_LOGGERS_THAT_WRITE_A_URL = ("httpx", "mcp.client.streamable_http")
+
+_TOKEN_PARAMETER = re.compile(r"([?&]token=)[^&\s'\"<>]+")
+_REDACTED_PARAMETER = r"\1REDACTED"
+
 
 async def load_tools(
     endpoint: McpEndpoint,
@@ -28,6 +38,12 @@ async def load_tools(
 
     The release callable comes back beside the tools because a caller cannot close a
     list. What it releases is described on `_release`.
+
+    The adapter is told to handle no tool error. Left to itself,
+    `langchain-mcp-adapters` 0.3.2 answers a `CallToolResult(isError=True)` with the
+    server's error text as though that text were a result, and the wrappers
+    `instrument` adds would store it as fetched material and serve it to every later
+    statement of the run.
 
     Args:
         endpoint: The Bright Data endpoint, which is itself the credential.
@@ -41,13 +57,15 @@ async def load_tools(
             missing one of the two tools. Either way the connection is released
             before this is raised, and the message names the endpoint redacted.
     """
+    _redact_third_party_records()
     client = MultiServerMCPClient(
         {
             _SERVER_NAME: {
                 "transport": "streamable_http",
                 "url": endpoint.unredacted_url(),
             }
-        }
+        },
+        handle_tool_errors=False,
     )
     try:
         offered = {tool.name: tool for tool in await client.get_tools()}
@@ -56,10 +74,7 @@ async def load_tools(
         # The cause is dropped rather than chained. It arrives from `httpx`, whose
         # message names the request URL, and the token travels inside that URL. This
         # is the one thing `McpEndpoint` cannot keep out of another library's text.
-        raise ConfigurationError(
-            f"the MCP server at {endpoint} could not be reached: "
-            f"{type(failure).__name__}"
-        ) from None
+        raise ConfigurationError(describe_failure(endpoint, failure)) from None
     missing = [name for name in _WANTED if name not in offered]
     if missing:
         await _release()
@@ -86,7 +101,8 @@ def instrument(
     Args:
         tools: The tools `load_tools` returned.
         cache: The run's store of fetched material.
-        settings: Read for `retry_attempts` and `page_character_ceiling`.
+        settings: Read for `retry_attempts`, `page_character_ceiling` and the endpoint
+            a failure names.
         sleep: Waits the number of seconds it is given, between retries.
 
     Returns:
@@ -94,6 +110,57 @@ def instrument(
         and argument schema so that the agent chooses between them as before.
     """
     return [_instrumented(tool, cache, settings, sleep) for tool in tools]
+
+
+class _TokenRedaction(logging.Filter):
+    """Take the Bright Data token out of a record before any handler prints it."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Rewrite the record in place, and keep it.
+
+        The message is settled here and its arguments dropped, so that a later
+        `getMessage` cannot rebuild the unredacted text. A traceback is rendered here
+        for the same reason: `logging.Formatter` renders one only where `exc_text` is
+        still empty, so filling it in is what decides what every handler prints.
+
+        Args:
+            record: The record a logger is about to hand to its handlers.
+
+        Returns:
+            `True`, always. This filter redacts rather than discards, because a
+            record naming a failed request is worth reading.
+        """
+        record.msg = _without_the_token(record.getMessage())
+        record.args = None
+        if record.exc_info is not None and record.exc_text is None:
+            rendered = traceback.format_exception(*record.exc_info)
+            record.exc_text = _without_the_token("".join(rendered))
+        return True
+
+
+def _redact_third_party_records() -> None:
+    """Stop another library's record from printing the endpoint URL whole.
+
+    `configure_logging` attaches a handler to the `factchecker` logger alone, so a
+    record from `mcp` or `httpx` finds no handler anywhere above it and
+    `logging.lastResort` prints it to stderr. `mcp` 1.29.0 renders a whole traceback
+    that way when a notification POST fails, and the `httpx` message inside it names
+    the request URL, which is the credential.
+
+    Attaching the filter twice would redact twice, which is harmless, and would grow
+    the list on every call, which is not. So a logger already carrying one is left
+    alone.
+    """
+    for name in _LOGGERS_THAT_WRITE_A_URL:
+        guarded = logging.getLogger(name)
+        attached = (isinstance(one, _TokenRedaction) for one in guarded.filters)
+        if not any(attached):
+            guarded.addFilter(_TokenRedaction())
+
+
+def _without_the_token(text: str) -> str:
+    """Replace the value of every `token` query parameter with `REDACTED`."""
+    return _TOKEN_PARAMETER.sub(_REDACTED_PARAMETER, text)
 
 
 async def _release() -> None:
@@ -115,7 +182,14 @@ def _instrumented(
     settings: Settings,
     sleep: Callable[[float], Awaitable[None]],
 ) -> BaseTool:
-    """Rebuild one tool around the wrapper that guards it."""
+    """Rebuild one tool around the wrapper that guards it.
+
+    Name, description, argument schema and metadata all come across, because the
+    agent reads all four to choose between tools and the adapter puts the server's
+    tool annotations in the last of them. `response_format` does not come across: the
+    original answers with content beside an artifact, and the wrapper answers with
+    the text it read out of that content.
+    """
     run = (
         _page_reader(tool, cache, settings, sleep)
         if tool.name == PAGE_TOOL_NAME
@@ -125,6 +199,7 @@ def _instrumented(
         name=tool.name,
         description=tool.description,
         args_schema=tool.args_schema,
+        metadata=tool.metadata,
         coroutine=run,
     )
 
@@ -193,7 +268,7 @@ async def _answer(
     async def call() -> str:
         return _as_text(await tool.ainvoke(arguments))
 
-    return await with_retry(call, settings.retry_attempts, sleep)
+    return await with_retry(call, settings.retry_attempts, sleep, settings.mcp_endpoint)
 
 
 def _as_text(answered: object) -> str:
@@ -204,10 +279,17 @@ def _as_text(answered: object) -> str:
     list of LangChain content blocks. Only the text blocks carry anything a model can
     read, so an image or a file block is dropped rather than described. A tool that
     answers with plain text instead — which `BaseTool` allows — is passed through.
+
+    A block that is not a mapping, and a text block with no text in it, are both read
+    as nothing. Neither shape is one the pinned adapter builds, and reading them as
+    nothing costs a line where letting them raise would cost a statement its check
+    and say only that a key was missing.
     """
     if isinstance(answered, list):
         return _BLOCK_SEPARATOR.join(
-            block["text"] for block in answered if block.get("type") == "text"
+            block.get("text", "")
+            for block in answered
+            if isinstance(block, dict) and block.get("type") == "text"
         )
     return str(answered)
 

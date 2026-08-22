@@ -16,11 +16,12 @@ from collections.abc import Awaitable, Callable
 import httpx
 import pytest
 from langchain_core.tools import BaseTool, StructuredTool
+from langchain_mcp_adapters.tools import _MCPToolExecutionError
 
 from factchecker import tools
 from factchecker.cache import RunCache
 from factchecker.config import ConfigurationError, McpEndpoint, Settings
-from factchecker.errors import AuthenticationFailed
+from factchecker.errors import AuthenticationFailed, McpCallError
 from factchecker.tools import (
     PAGE_TOOL_NAME,
     SEARCH_TOOL_NAME,
@@ -95,8 +96,16 @@ class _Clock:
         self.delays.append(seconds)
 
 
-def _tool(name: str, server: _Server) -> BaseTool:
-    """A tool of the given name, answered by the given server."""
+def _tool(
+    name: str, server: _Server, metadata: dict[str, object] | None = None
+) -> BaseTool:
+    """A tool of the given name, answered by the given server.
+
+    A real adapter tool raises rather than answers when the server reports a tool
+    error, because `load_tools` builds the client with `handle_tool_errors=False`.
+    A `StructuredTool` does the same with an unset `handle_tool_error`, so a `_Server`
+    that raises a `_MCPToolExecutionError` reproduces that path exactly.
+    """
 
     async def call(**arguments: object) -> object:
         return await server(**arguments)
@@ -105,6 +114,7 @@ def _tool(name: str, server: _Server) -> BaseTool:
         name=name,
         description=f"the {name} tool",
         args_schema=SCHEMAS.get(name, SEARCH_SCHEMA),
+        metadata=metadata,
         coroutine=call,
     )
 
@@ -114,15 +124,20 @@ def _client_offering(
 ) -> type[object]:
     """A stand-in for `MultiServerMCPClient` that offers the given tools.
 
-    The class records every connection configuration it is constructed with, so a
-    test can assert on the URL `load_tools` opened without that URL being logged.
+    The class records every connection configuration it is constructed with and every
+    option it was built with, so a test can assert on the URL `load_tools` opened
+    without that URL being logged.
     """
 
     class _FakeClient:
         opened: list[dict[str, dict[str, str]]] = []
+        options: list[dict[str, object]] = []
 
-        def __init__(self, connections: dict[str, dict[str, str]]) -> None:
+        def __init__(
+            self, connections: dict[str, dict[str, str]], **options: object
+        ) -> None:
             _FakeClient.opened.append(connections)
+            _FakeClient.options.append(options)
 
         async def get_tools(self) -> list[BaseTool]:
             if failing is not None:
@@ -135,6 +150,18 @@ def _client_offering(
 def _offering_neither() -> type[object]:
     """A client whose server offers neither of the two tools this package needs."""
     return _client_offering(_tool("session_stats", _Server()))
+
+
+def _offering_only(name: str) -> type[object]:
+    """A client whose server offers one of the two tools and not the other."""
+    return _client_offering(_tool(name, _Server()))
+
+
+def _tool_error(
+    text: str = "target site blocked the request",
+) -> _MCPToolExecutionError:
+    """The exception the adapter raises for `CallToolResult(isError=True)`."""
+    return _MCPToolExecutionError([{"type": "text", "text": text}])
 
 
 def _settings(**overrides: object) -> Settings:
@@ -333,6 +360,58 @@ def test_the_rejected_catalogue_names_the_endpoint_redacted(
     assert CREDENTIAL not in caplog.text
 
 
+def test_load_tools_asks_the_adapter_to_raise_a_tool_error_rather_than_answer_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This is the seam that keeps a server-side error out of the run's cache.
+
+    `langchain-mcp-adapters` 0.3.2 returns the error text as though it were a result
+    unless the client is built this way, and the wrappers cannot tell such a result
+    from a real one.
+    """
+    client = _client_offering(
+        _tool(SEARCH_TOOL_NAME, _Server()), _tool(PAGE_TOOL_NAME, _Server())
+    )
+    monkeypatch.setattr(tools, "MultiServerMCPClient", client)
+
+    asyncio.run(load_tools(ENDPOINT))
+
+    (options,) = client.options
+    assert options == {"handle_tool_errors": False}
+
+
+def test_a_server_offering_one_of_the_two_tools_is_rejected_by_the_missing_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Half a catalogue is a misconfiguration too, and the message says which half."""
+    monkeypatch.setattr(tools, "MultiServerMCPClient", _offering_only(SEARCH_TOOL_NAME))
+
+    with pytest.raises(ConfigurationError) as raised:
+        asyncio.run(load_tools(ENDPOINT))
+
+    assert f"offers no {PAGE_TOOL_NAME};" in str(raised.value)
+    assert " and no " not in str(raised.value)
+    assert SEARCH_TOOL_NAME in str(raised.value)
+
+
+def test_a_failure_to_connect_names_the_status_the_server_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected token, a refused connection and a 500 all group alike.
+
+    Without the status the message reads the same for all three, and an operator
+    reading it cannot tell a bad token from a server that is down.
+    """
+    monkeypatch.setattr(
+        tools, "MultiServerMCPClient", _client_offering(failing=_status_failure(500))
+    )
+
+    with pytest.raises(ConfigurationError) as raised:
+        asyncio.run(load_tools(ENDPOINT))
+
+    assert str(raised.value) == f"the MCP server at {ENDPOINT} returned 500"
+
+
 def test_an_instrumented_tool_keeps_its_name_description_and_schema() -> None:
     """The agent chooses tools by what they say they are, so none of that may move."""
     original = _tool(SEARCH_TOOL_NAME, _Server())
@@ -342,6 +421,16 @@ def test_an_instrumented_tool_keeps_its_name_description_and_schema() -> None:
     assert wrapped.name == original.name
     assert wrapped.description == original.description
     assert wrapped.args_schema == original.args_schema
+
+
+def test_an_instrumented_tool_keeps_the_annotations_the_server_published() -> None:
+    """The adapter puts the server's tool annotations there, and an agent reads them."""
+    annotations = {"readOnlyHint": True, "title": "Search the web"}
+    original = _tool(SEARCH_TOOL_NAME, _Server(), metadata=annotations)
+
+    (wrapped,) = instrument([original], RunCache(), _settings(), _Clock())
+
+    assert wrapped.metadata == annotations
 
 
 def test_a_search_miss_calls_the_server_and_a_hit_does_not() -> None:
@@ -382,6 +471,27 @@ def test_a_tool_that_answers_with_plain_text_is_passed_through() -> None:
     search = _instrumented((SEARCH_TOOL_NAME, server))[SEARCH_TOOL_NAME]
 
     assert _call(search, query=QUERY) == "boiling point: 100 C"
+
+
+@pytest.mark.parametrize(
+    "answered",
+    [
+        ["a bare string where a block belongs"],
+        [{"type": "text"}],
+    ],
+)
+def test_a_block_of_an_unexpected_shape_reads_as_nothing(
+    answered: list[object],
+) -> None:
+    """Neither shape is one the pinned adapter builds, and neither may end a check.
+
+    Reading a block that is not a mapping, or a text block with no text in it, would
+    otherwise raise where the reader can say only that an attribute or a key is
+    missing.
+    """
+    search = _instrumented((SEARCH_TOOL_NAME, _Server(answered)))[SEARCH_TOOL_NAME]
+
+    assert _call(search, query=QUERY) == ""
 
 
 def test_a_page_within_the_ceiling_passes_through_whole() -> None:
@@ -450,7 +560,7 @@ def test_a_transient_failure_is_retried_as_often_as_the_settings_allow() -> None
         (SEARCH_TOOL_NAME, server), settings=_settings(retry_attempts=2), sleep=clock
     )[SEARCH_TOOL_NAME]
 
-    with pytest.raises(ExceptionGroup):
+    with pytest.raises(McpCallError):
         _call(search, query=QUERY)
 
     assert len(server.calls) == 2
@@ -462,10 +572,41 @@ def test_a_failed_search_is_not_cached() -> None:
     server = _Server(_status_failure(404), _blocks("boiling point: 100 C"))
     search = _instrumented((SEARCH_TOOL_NAME, server))[SEARCH_TOOL_NAME]
 
-    with pytest.raises(ExceptionGroup):
+    with pytest.raises(McpCallError):
         _call(search, query=QUERY)
 
     assert _call(search, query=QUERY) == "boiling point: 100 C"
+
+
+def test_an_error_the_server_reported_is_never_stored_as_evidence() -> None:
+    """A blocked target or a spent quota is a failure, not a search result.
+
+    The adapter answers a `CallToolResult(isError=True)` with the error text unless it
+    is told otherwise, and a cache that took that text would hand it to every later
+    statement of the run as the evidence it searched for.
+    """
+    server = _Server(_tool_error(), _blocks("boiling point: 100 C"))
+    cache = RunCache()
+    search = _instrumented((SEARCH_TOOL_NAME, server), cache=cache)[SEARCH_TOOL_NAME]
+
+    with pytest.raises(McpCallError):
+        _call(search, query=QUERY)
+
+    assert cache.search(QUERY) is None
+    assert _call(search, query=QUERY) == "boiling point: 100 C"
+
+
+def test_an_error_the_server_reported_is_never_stored_as_a_page() -> None:
+    """The page tool keeps its own store, so it needs its own assertion."""
+    server = _Server(_tool_error(), _blocks("# Boiling"))
+    cache = RunCache()
+    reader = _instrumented((PAGE_TOOL_NAME, server), cache=cache)[PAGE_TOOL_NAME]
+
+    with pytest.raises(McpCallError):
+        _call(reader, url=URL)
+
+    assert cache.page(URL) is None
+    assert _call(reader, url=URL) == "# Boiling"
 
 
 def test_a_rejected_credential_propagates_out_of_the_tool() -> None:
@@ -535,3 +676,77 @@ def test_no_record_a_tool_call_writes_carries_the_endpoint(
     assert caplog.records
     assert CREDENTIAL not in caplog.text
     assert "mcp.brightdata.com" not in caplog.text
+
+
+def _loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run `load_tools` against a server that offers both tools, and drop the result.
+
+    What the tests below want from it is the logging guard it attaches on the way in.
+    """
+    monkeypatch.setattr(
+        tools,
+        "MultiServerMCPClient",
+        _client_offering(
+            _tool(SEARCH_TOOL_NAME, _Server()), _tool(PAGE_TOOL_NAME, _Server())
+        ),
+    )
+    asyncio.run(load_tools(ENDPOINT))
+
+
+def test_a_third_party_traceback_cannot_print_the_endpoint_whole(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`mcp` renders a whole traceback when a notification POST fails.
+
+    `configure_logging` gives the `factchecker` logger a handler and nothing else, so
+    such a record reaches `logging.lastResort` and prints to stderr. The `httpx`
+    message inside it names the request URL, and the token travels in that URL.
+    """
+    _loaded(monkeypatch)
+    caplog.set_level(logging.DEBUG)
+    failed = _status_failure(500)
+    assert CREDENTIAL in "".join(traceback.format_exception(failed))
+
+    try:
+        raise failed
+    except BaseExceptionGroup:
+        logging.getLogger("mcp.client.streamable_http").exception(
+            "Error in post_writer"
+        )
+
+    printed = caplog.text + capsys.readouterr().err
+    assert CREDENTIAL not in printed
+    assert "token=REDACTED" in printed
+    assert "Error in post_writer" in printed
+    assert "HTTPStatusError" in printed
+
+
+def test_a_third_party_message_naming_the_endpoint_is_redacted(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`httpx` writes the request URL into the message itself, without a traceback."""
+    _loaded(monkeypatch)
+    caplog.set_level(logging.DEBUG)
+
+    logging.getLogger("httpx").warning(
+        "HTTP Request: %s %s", "POST", ENDPOINT.unredacted_url()
+    )
+
+    assert CREDENTIAL not in caplog.text
+    assert "token=REDACTED" in caplog.text
+
+
+def test_the_redaction_is_attached_once_however_often_the_tools_are_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A logger holds its filters in a list, and one grown on every call is a leak."""
+    _loaded(monkeypatch)
+    _loaded(monkeypatch)
+
+    guarded = logging.getLogger("mcp.client.streamable_http")
+    attached = [
+        one for one in guarded.filters if isinstance(one, tools._TokenRedaction)
+    ]
+    assert len(attached) == 1

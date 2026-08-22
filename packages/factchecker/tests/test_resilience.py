@@ -14,14 +14,21 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 import pytest
+from langchain_mcp_adapters.tools import _MCPToolExecutionError
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData
 
-from factchecker.errors import AuthenticationFailed
-from factchecker.resilience import FailureKind, classify, with_retry
+from factchecker.config import McpEndpoint
+from factchecker.errors import AuthenticationFailed, McpCallError
+from factchecker.resilience import (
+    FailureKind,
+    classify,
+    describe_failure,
+    with_retry,
+)
 
 CREDENTIAL = "brd-4a7f2e91c0"
-ENDPOINT = f"https://mcp.brightdata.com/mcp?token={CREDENTIAL}"
+ENDPOINT = McpEndpoint(CREDENTIAL)
 
 # One band per retry: the base delay doubles, and jitter moves it by a quarter either
 # way. The bands do not overlap, so "the delay grows" is assertable without a seed.
@@ -30,10 +37,23 @@ BANDS = ((0.375, 0.625), (0.75, 1.25), (1.5, 2.5))
 
 def _status_failure(status: int) -> httpx.HTTPStatusError:
     """The exception `httpx` raises for an error status, with its own message."""
-    response = httpx.Response(status, request=httpx.Request("POST", ENDPOINT))
+    request = httpx.Request("POST", ENDPOINT.unredacted_url())
+    response = httpx.Response(status, request=request)
     with pytest.raises(httpx.HTTPStatusError) as raised:
         response.raise_for_status()
     return raised.value
+
+
+def _tool_error(
+    text: str = "target site blocked the request",
+) -> _MCPToolExecutionError:
+    """The exception the adapter raises for `CallToolResult(isError=True)`.
+
+    `load_tools` asks for this shape by building the client with
+    `handle_tool_errors=False`, so it is what a server-side tool error looks like by
+    the time it reaches the retry policy.
+    """
+    return _MCPToolExecutionError([{"type": "text", "text": text}])
 
 
 def _from_the_transport(*failures: Exception) -> BaseException:
@@ -70,7 +90,7 @@ def _retry(
     call: Callable[[], Awaitable[str]], attempts: int, clock: _Clock
 ) -> str | BaseException:
     """Drive `with_retry` to completion, and hand back whatever it produced."""
-    return asyncio.run(with_retry(call, attempts, clock))
+    return asyncio.run(with_retry(call, attempts, clock, ENDPOINT))
 
 
 @pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
@@ -117,6 +137,15 @@ def test_a_failure_carrying_no_http_status_is_permanent(failure: Exception) -> N
     assert classify(failure) == "permanent"
 
 
+def test_a_tool_level_error_from_the_server_is_permanent() -> None:
+    """Bright Data says a rate limit and a bad argument in the same free text.
+
+    Nothing tells them apart that a wording change would not break, so the statement
+    fails once rather than spending the run's budget guessing which one it met.
+    """
+    assert classify(_tool_error()) == "permanent"
+
+
 @pytest.mark.parametrize(
     ("failure", "kind"),
     [
@@ -139,6 +168,58 @@ def test_a_group_holding_a_rejected_credential_reads_as_authentication() -> None
     assert classify(group) == "authentication"
 
 
+@pytest.mark.parametrize("status", [422, 503])
+def test_a_description_names_the_status_the_server_returned(status: int) -> None:
+    """A status code is the one fact about a failure a reader can act on."""
+    described = describe_failure(ENDPOINT, _from_the_transport(_status_failure(status)))
+
+    assert described == f"the MCP server at {ENDPOINT} returned {status}"
+
+
+def test_a_description_reads_a_status_off_an_unwrapped_failure_too() -> None:
+    """The wrapping is the transport's habit, not a shape this may depend on."""
+    described = describe_failure(ENDPOINT, _status_failure(422))
+
+    assert described == f"the MCP server at {ENDPOINT} returned 422"
+
+
+def test_a_call_that_was_never_answered_is_described_as_unreachable() -> None:
+    """A refused connection and a rejected token read alike without this."""
+    dropped = _from_the_transport(httpx.ConnectError("All connection attempts failed"))
+
+    described = describe_failure(ENDPOINT, dropped)
+
+    assert described == f"the MCP server at {ENDPOINT} could not be reached"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        _tool_error(),
+        McpError(ErrorData(code=-32601, message="Method not found")),
+    ],
+)
+def test_a_failure_with_no_status_at_all_is_still_described_in_plain_words(
+    failure: Exception,
+) -> None:
+    """The reader gets a sentence rather than the name of a Python class."""
+    described = describe_failure(ENDPOINT, failure)
+
+    assert described == f"the MCP server at {ENDPOINT} could not complete the request"
+
+
+def test_no_description_carries_the_token_or_another_library_s_words() -> None:
+    """The description reaches the output payload, which a person reads."""
+    original = _from_the_transport(_status_failure(503))
+    assert CREDENTIAL in str(original.exceptions[0])
+
+    described = describe_failure(ENDPOINT, original)
+
+    assert CREDENTIAL not in described
+    assert "TaskGroup" not in described
+    assert str(ENDPOINT) in described
+
+
 def test_a_call_that_succeeds_is_made_once_and_waits_for_nothing() -> None:
     """The retry policy costs nothing on the path that does not fail."""
     call, clock = _Call("the page"), _Clock()
@@ -158,15 +239,15 @@ def test_a_transient_failure_is_retried_until_it_succeeds() -> None:
     assert len(clock.delays) == 2
 
 
-def test_a_transient_failure_that_never_clears_raises_what_it_last_saw() -> None:
-    """The attempts run out and the caller sees the failure, not a substitute."""
+def test_a_transient_failure_that_never_clears_becomes_this_package_s_failure() -> None:
+    """The attempts run out, and what the caller sees names the endpoint and status."""
     failure = _from_the_transport(_status_failure(503))
     call, clock = _Call(failure, failure, failure), _Clock()
 
-    with pytest.raises(ExceptionGroup) as raised:
+    with pytest.raises(McpCallError) as raised:
         _retry(call, 3, clock)
 
-    assert raised.value is failure
+    assert str(raised.value) == f"the MCP server at {ENDPOINT} returned 503"
     assert call.made == 3
 
 
@@ -175,7 +256,7 @@ def test_the_delay_between_attempts_grows_and_is_jittered() -> None:
     failure = _from_the_transport(_status_failure(503))
     call, clock = _Call(*[failure] * 4), _Clock()
 
-    with pytest.raises(ExceptionGroup):
+    with pytest.raises(McpCallError):
         _retry(call, 4, clock)
 
     assert len(clock.delays) == len(BANDS)
@@ -190,11 +271,27 @@ def test_the_number_of_attempts_is_the_one_the_caller_passes(attempts: int) -> N
     failure = _from_the_transport(_status_failure(503))
     call, clock = _Call(*[failure] * attempts), _Clock()
 
-    with pytest.raises(ExceptionGroup):
+    with pytest.raises(McpCallError):
         _retry(call, attempts, clock)
 
     assert call.made == attempts
     assert len(clock.delays) == attempts - 1
+
+
+def test_a_count_below_one_stops_after_the_first_attempt() -> None:
+    """`load_settings` rejects such a count, and this function is public regardless.
+
+    A counter compared for equality walks straight past a count of zero, and a
+    transient failure then retries for as long as the process lives.
+    """
+    failure = _from_the_transport(_status_failure(503))
+    call, clock = _Call(failure), _Clock()
+
+    with pytest.raises(McpCallError):
+        _retry(call, 0, clock)
+
+    assert call.made == 1
+    assert clock.delays == []
 
 
 def test_a_permanent_failure_raises_at_once() -> None:
@@ -202,12 +299,24 @@ def test_a_permanent_failure_raises_at_once() -> None:
     failure = _from_the_transport(_status_failure(404))
     call, clock = _Call(failure, "unreached"), _Clock()
 
-    with pytest.raises(ExceptionGroup) as raised:
+    with pytest.raises(McpCallError) as raised:
         _retry(call, 3, clock)
 
-    assert raised.value is failure
+    assert str(raised.value) == f"the MCP server at {ENDPOINT} returned 404"
     assert call.made == 1
     assert clock.delays == []
+
+
+def test_a_permanent_failure_carries_no_token_out_of_the_retry() -> None:
+    """The message reaches the output payload, which is worse than reaching a log."""
+    original = _from_the_transport(_status_failure(422))
+    assert CREDENTIAL in str(original.exceptions[0])
+
+    with pytest.raises(McpCallError) as raised:
+        _retry(_Call(original), 3, _Clock())
+
+    assert CREDENTIAL not in str(raised.value)
+    assert raised.value.__cause__ is None
 
 
 def test_a_rejected_credential_becomes_this_package_s_own_failure() -> None:
