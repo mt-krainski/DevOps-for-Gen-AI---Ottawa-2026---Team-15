@@ -39,6 +39,52 @@ echo '{"paragraph": "..."}' | statement-classifier classify-paragraph
 
 `--concurrency` sets the ceiling on classification LLM calls in flight at once. It defaults to 5.
 
+### Example
+
+```bash
+echo '{"paragraph": "The prime minister said talks had taken place with the United States over the past year, and accelerated in recent days. He suggested his team had been skeptical, but optimistic a deal could be reached."}' \
+  | uv run statement-classifier classify-paragraph
+```
+
+```json
+{
+  "statements": [
+    {
+      "statement": "The prime minister said talks had taken place with the United States over the past year",
+      "classification": {
+        "class": "fact",
+        "confidence": 0.9
+      },
+      "error": null
+    },
+    {
+      "statement": "and accelerated in recent days.",
+      "classification": {
+        "class": "fact",
+        "confidence": 0.85
+      },
+      "error": null
+    },
+    {
+      "statement": "He suggested his team had been skeptical,",
+      "classification": {
+        "class": "fact",
+        "confidence": 0.75
+      },
+      "error": null
+    },
+    {
+      "statement": "but optimistic a deal could be reached.",
+      "classification": {
+        "class": "opinion",
+        "confidence": 0.85
+      },
+      "error": null
+    }
+  ]
+}
+```
+
 ### Exit codes
 
 | Code | Meaning |
