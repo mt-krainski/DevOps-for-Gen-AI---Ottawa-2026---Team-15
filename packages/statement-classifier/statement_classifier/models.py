@@ -60,14 +60,14 @@ class ClassifierOutput(_WireModel):
     statements: list[ClassifiedStatement]
 
 
-class ParagraphInput(_WireModel):
-    """Paragraph mode's input: raw text this package splits itself."""
+class TextInput(_WireModel):
+    """Text mode's input: raw text this package splits itself."""
 
-    paragraph: str = Field(min_length=1)
+    text: str = Field(min_length=1)
 
-    @field_validator("paragraph")
+    @field_validator("text")
     @classmethod
     def _reject_blank(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError("paragraph must not be empty or whitespace-only")
+            raise ValueError("text must not be empty or whitespace-only")
         return value

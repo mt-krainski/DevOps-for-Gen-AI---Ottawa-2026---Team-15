@@ -11,8 +11,8 @@ from statement_classifier.config import DEFAULT_CONCURRENCY
 from statement_classifier.errors import ClassifierError, ErrorCode
 from statement_classifier.models import ClassifierOutput
 from statement_classifier.service import (
-    classify_paragraph_sync,
     classify_statements_sync,
+    classify_text_sync,
 )
 
 EXIT_SUCCESS = 0
@@ -65,11 +65,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_io_arguments(classify_parser)
 
-    classify_paragraph_parser = subparsers.add_parser(
-        "classify-paragraph",
-        help="Split a paragraph into statements and classify each as fact or opinion",
+    classify_text_parser = subparsers.add_parser(
+        "classify-text",
+        help="Split text into statements and classify each as fact or opinion",
     )
-    _add_io_arguments(classify_paragraph_parser)
+    _add_io_arguments(classify_text_parser)
 
     return parser
 
@@ -139,8 +139,8 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else EXIT_INVALID_INPUT
 
-    if args.command == "classify-paragraph":
-        return _run(args, classify_paragraph_sync)
+    if args.command == "classify-text":
+        return _run(args, classify_text_sync)
     return _run(args, classify_statements_sync)
 
 

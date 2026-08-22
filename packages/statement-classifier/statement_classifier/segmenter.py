@@ -1,4 +1,4 @@
-"""One paragraph, many statements: splitting text before it's classified."""
+"""Text in, statements out: the split that happens before anything is classified."""
 
 import asyncio
 from typing import Protocol
@@ -9,7 +9,7 @@ from pydantic import BaseModel, ValidationError
 from statement_classifier.config import ClassifierConfig
 from statement_classifier.errors import ClassifierError, ErrorCode
 
-SEGMENTATION_PROMPT_TEMPLATE = """Split the following paragraph into separate \
+SEGMENTATION_PROMPT_TEMPLATE = """Split the following text into separate \
 statements, each one a self-contained clause or sentence that could be judged \
 independently as fact or opinion.
 
@@ -18,8 +18,8 @@ correct it — and preserve reading order. Split on a clause boundary where a \
 conjunction changes what is being claimed (e.g. "but", "although", "however"), \
 not only on sentence-ending punctuation.
 
-Paragraph:
-{paragraph}
+Text:
+{text}
 """
 
 CALL_TIMEOUT_SECONDS = 30.0
@@ -34,10 +34,10 @@ class _Segments(BaseModel):
 
 
 class StructuredSegmenterModel(Protocol):
-    """The seam tests mock: a runnable returning the paragraph's statements."""
+    """The seam tests mock: a runnable returning the text's statements."""
 
     async def ainvoke(self, prompt: str) -> _Segments:
-        """Split the one paragraph the prompt carries."""
+        """Split the one text the prompt carries."""
         ...
 
 
@@ -60,28 +60,26 @@ def build_segmenter_model(config: ClassifierConfig) -> StructuredSegmenterModel:
     return chat.with_structured_output(_Segments)
 
 
-async def segment_paragraph(
-    paragraph: str, model: StructuredSegmenterModel
-) -> list[str]:
-    """Split a paragraph into statements, retrying a transient failure.
+async def segment_text(text: str, model: StructuredSegmenterModel) -> list[str]:
+    """Split the text into statements, retrying a transient failure.
 
     Unlike a per-statement classification failure, a segmentation failure has
-    nothing to isolate it onto — a paragraph that can't be split yields no
+    nothing to isolate it onto — text that can't be split yields no
     statements to classify — so it aborts the whole call rather than being
     reported per item.
 
     Args:
-        paragraph: The text to split.
+        text: The text to split.
         model: The runnable to call.
 
     Returns:
-        The statements the paragraph was split into, in reading order.
+        The statements the text was split into, in reading order.
 
     Raises:
         ClassifierError: Every attempt failed (`SEGMENTATION_ERROR`), or the
             credential was rejected (`AUTH_ERROR`).
     """
-    prompt = SEGMENTATION_PROMPT_TEMPLATE.format(paragraph=paragraph)
+    prompt = SEGMENTATION_PROMPT_TEMPLATE.format(text=text)
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         is_last_attempt = attempt == MAX_ATTEMPTS

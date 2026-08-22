@@ -1,4 +1,4 @@
-"""Tests for the paragraph-splitting call in `statement_classifier.segmenter`."""
+"""Tests for the text-splitting call in `statement_classifier.segmenter`."""
 
 import asyncio
 
@@ -8,17 +8,17 @@ import pytest
 
 from statement_classifier import segmenter as segmenter_module
 from statement_classifier.errors import ClassifierError, ErrorCode
-from statement_classifier.segmenter import _Segments, segment_paragraph
+from statement_classifier.segmenter import _Segments, segment_text
 from tests.conftest import FakeModel
 
-PARAGRAPH = (
+TEXT = (
     "Carney confirmed he was adding tariffs that would add costs for Canadians, "
     "but insisted they were necessary to retaliate against Trump's levies"
 )
 
 
-async def test_splits_a_paragraph_into_its_statements() -> None:
-    """The paragraph comes back split, verbatim, in reading order."""
+async def test_splits_text_into_its_statements() -> None:
+    """The text comes back split, verbatim, in reading order."""
     model = FakeModel(
         [
             _Segments(
@@ -32,7 +32,7 @@ async def test_splits_a_paragraph_into_its_statements() -> None:
         ]
     )
 
-    result = await segment_paragraph(PARAGRAPH, model)
+    result = await segment_text(TEXT, model)
 
     assert result == [
         "Carney confirmed he was adding tariffs that would add costs for Canadians",
@@ -40,21 +40,21 @@ async def test_splits_a_paragraph_into_its_statements() -> None:
     ]
 
 
-async def test_prompt_includes_the_paragraph() -> None:
-    """The paragraph reaches the model."""
-    model = FakeModel([_Segments(statements=[PARAGRAPH])])
+async def test_prompt_includes_the_text() -> None:
+    """The text reaches the model."""
+    model = FakeModel([_Segments(statements=[TEXT])])
 
-    await segment_paragraph(PARAGRAPH, model)
+    await segment_text(TEXT, model)
 
     assert len(model.calls) == 1
-    assert PARAGRAPH in model.calls[0]
+    assert TEXT in model.calls[0]
 
 
-async def test_paragraph_with_no_statements_returns_empty_list() -> None:
-    """A paragraph the model finds nothing splittable in yields no statements."""
+async def test_text_with_no_statements_returns_empty_list() -> None:
+    """Text the model finds nothing splittable in yields no statements."""
     model = FakeModel([_Segments(statements=[])])
 
-    result = await segment_paragraph(PARAGRAPH, model)
+    result = await segment_text(TEXT, model)
 
     assert result == []
 
@@ -64,7 +64,7 @@ async def test_llm_error_after_retries_exhausted_raises_segmentation_error() -> 
     model = FakeModel([RuntimeError("boom")] * 3)
 
     with pytest.raises(ClassifierError) as exc_info:
-        await segment_paragraph(PARAGRAPH, model)
+        await segment_text(TEXT, model)
 
     assert exc_info.value.code == ErrorCode.SEGMENTATION_ERROR
     assert len(model.calls) == 3
@@ -84,7 +84,7 @@ async def test_timeout_after_retries_exhausted_raises_segmentation_error() -> No
     segmenter_module.CALL_TIMEOUT_SECONDS = 0.01
     try:
         with pytest.raises(ClassifierError) as exc_info:
-            await segment_paragraph(PARAGRAPH, model)
+            await segment_text(TEXT, model)
     finally:
         segmenter_module.CALL_TIMEOUT_SECONDS = original_timeout
 
@@ -93,11 +93,11 @@ async def test_timeout_after_retries_exhausted_raises_segmentation_error() -> No
 
 async def test_recovers_after_transient_failure() -> None:
     """One failed attempt is retried, and the retry's answer is returned."""
-    model = FakeModel([RuntimeError("transient"), _Segments(statements=[PARAGRAPH])])
+    model = FakeModel([RuntimeError("transient"), _Segments(statements=[TEXT])])
 
-    result = await segment_paragraph(PARAGRAPH, model)
+    result = await segment_text(TEXT, model)
 
-    assert result == [PARAGRAPH]
+    assert result == [TEXT]
     assert len(model.calls) == 2
 
 
@@ -106,7 +106,7 @@ async def test_unparseable_output_after_retries_raises_segmentation_error() -> N
     model = FakeModel([{"not": "segments"}] * 3)
 
     with pytest.raises(ClassifierError) as exc_info:
-        await segment_paragraph(PARAGRAPH, model)
+        await segment_text(TEXT, model)
 
     assert exc_info.value.code == ErrorCode.SEGMENTATION_ERROR
 
@@ -123,7 +123,7 @@ async def test_rejected_credential_raises_auth_error_immediately() -> None:
     model = FakeModel([auth_error])
 
     with pytest.raises(ClassifierError) as exc_info:
-        await segment_paragraph(PARAGRAPH, model)
+        await segment_text(TEXT, model)
 
     assert exc_info.value.code == ErrorCode.AUTH_ERROR
     assert len(model.calls) == 1
