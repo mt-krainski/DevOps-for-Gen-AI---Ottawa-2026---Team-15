@@ -1,9 +1,8 @@
 """Tests for the three prompts in `factchecker.prompts`.
 
-The wording is the implementer's to choose, and Task 4 tunes it against the evaluation
-suite, so these tests pin the elements a prompt must carry rather than the sentences it
-carries them in. Each test names one element and asserts the least that shows it is
-there.
+The wording is tuned against the evaluation suite in `eval/`, so these tests pin the
+elements a prompt must carry rather than the sentences it carries them in. Each test
+names one element and asserts the least that shows it is there.
 """
 
 import pytest
@@ -96,18 +95,6 @@ def test_the_system_prompt_asks_for_the_budget_to_be_planned_across_both_tools()
     assert SEARCH_TOOL_NAME in prompt
     assert PAGE_TOOL_NAME in prompt
     assert "plan" in prompt.lower()
-
-
-def test_the_system_prompt_asks_the_search_tool_for_a_query_and_nothing_else() -> None:
-    """The run cache keys a search on its query, so a varied argument is a wasted call.
-
-    This is a property of `factchecker.tools`, not a preference. A prompt that invited
-    the model to vary `num_results` or `country` would spend calls on results the cache
-    had already served.
-    """
-    prompt = build_system_prompt(BUDGET).lower()
-
-    assert "query and nothing else" in prompt
 
 
 def test_the_system_prompt_says_the_ruling_is_asked_for_in_a_turn_of_its_own() -> None:

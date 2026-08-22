@@ -274,7 +274,7 @@ def test_load_tools_opens_the_endpoint_with_the_token_in_the_url(
 def test_the_release_callable_is_reachable_and_callable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Task 4 closes the run by calling this, and a caller cannot close a list."""
+    """`cli._check` closes the run by calling this, and a caller cannot close a list."""
     monkeypatch.setattr(
         tools,
         "MultiServerMCPClient",

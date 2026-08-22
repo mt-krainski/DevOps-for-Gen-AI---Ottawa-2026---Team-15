@@ -1,7 +1,7 @@
 """What the agent is told: its standing instructions, its claim, and its budget.
 
-The wording lives here rather than inside the agent so that Task 4 can tune it against
-the evaluation suite without touching the loop that spends it.
+The wording lives here rather than inside `AgentChecker` so that it can be tuned against
+the evaluation suite in `eval/` without touching the loop that spends it.
 
 A check is two kinds of request, and the wording follows the split. The searching turns
 carry the system prompt, the claim and a budget reminder, and they may call a tool. The
@@ -31,10 +31,6 @@ You have two tools:
 
 - `{SEARCH_TOOL_NAME}` asks a search engine a question and returns results.
 - `{PAGE_TOOL_NAME}` reads one page and returns it as markdown.
-
-Ask `{SEARCH_TOOL_NAME}` for a query and nothing else. Every other argument is
-forwarded but changes nothing: two searches that differ only in those arguments
-return the same results, so the second one buys you nothing.
 
 ## Your budget
 
