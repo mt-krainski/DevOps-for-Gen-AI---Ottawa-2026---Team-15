@@ -6,6 +6,41 @@ sources behind it. Opinions pass through untouched.
 
 The tool reports what the evidence shows. It does not establish truth, and its vocabulary says so.
 
+## Command line
+
+```bash
+factchecker --input statements.json --output rulings.json
+```
+
+Both paths are required. `--input` names a JSON file holding the input described below, and
+`--output` names the file the rulings are written to. `--verbose` raises the log level to DEBUG.
+
+This build ships no checking agent. Every factual statement comes back `unverifiable` with a
+justification that says no search ran, and `meta.model` reads `offline`.
+
+### Exit codes
+
+- `0` — an output payload was written. Statements inside it may still carry errors.
+- `2` — the input could not be read, or it did not satisfy the contract.
+- `3` — a credential was rejected.
+
+A failed statement is a result the payload carries, so it leaves the exit code at zero. Codes `2`
+and `3` mean no payload exists, and no output file is written.
+
+### Logging
+
+Every log record goes to stderr. The output file is the only place the payload is written, and
+stdout stays empty.
+
+At INFO the tool writes one line for each statement, naming the statement, the elapsed time, and
+what became of it. `--verbose` raises the level to DEBUG. Without the flag the `LOG_LEVEL`
+environment variable names the level, and the level is INFO where that variable is unset or names no
+level the standard library knows.
+
+A run that a rejected credential ends writes no line for the statements it cancelled. Those checks
+never finished, so there is nothing to report for them. That is the design, and not a missing
+record.
+
 ## Input
 
 One JSON object with a `statements` array. Field names are camelCase on the wire.
@@ -104,7 +139,13 @@ word.
 
 ## Development
 
+Run both checks from `packages/factchecker/`:
+
 ```bash
 uv run poe lint
 uv run poe test
 ```
+
+`lint` runs `ruff check` and `ruff format --check`. `test` runs the suite under coverage and prints
+the report. Continuous integration runs the same two commands on every pull request that touches
+this package.

@@ -1,0 +1,47 @@
+name: factchecker
+
+# The path filter keeps this package's checks independent of every other package
+# in the monorepo: a teammate's change never queues, or fails, this job.
+on:
+  pull_request:
+    paths:
+      - "packages/factchecker/**"
+      - ".github/workflows/factchecker.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/factchecker
+
+jobs:
+  checks:
+    name: Lint and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: packages/factchecker/.python-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: packages/factchecker/uv.lock
+
+      # No credential is supplied and no model is called: every test in this
+      # package runs against a checker the test injects.
+      - name: Sync the package
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run poe lint
+
+      - name: Test
+        run: uv run poe test
