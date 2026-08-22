@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 EXIT_OK = 0
 EXIT_INPUT_REJECTED = 2
 EXIT_CREDENTIAL_REJECTED = 3
+EXIT_OUTPUT_UNWRITABLE = 4
 
 # No checking agent ships with this build, so nothing calls a model and no
 # model slug would be true of the run.
@@ -34,9 +35,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     Returns:
         The process exit code. It is 0 where an output payload was written, which
-        includes a run whose statements carry errors of their own. It is 2 where
-        the input could not be read or did not satisfy the contract, and 3 where a
-        credential was rejected. Both of those mean no payload exists.
+        includes a run whose statements carry errors of their own. Every other code
+        says why no output file holds a payload: 2 where the input could not be read
+        or did not satisfy the contract, 3 where a credential was rejected, and 4
+        where the payload was built and the write failed. A crash exits 1, so the
+        failed write carries a code of its own rather than that one.
     """
     arguments = _parse_arguments(argv)
     configure_logging(arguments.verbose)
@@ -50,12 +53,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         json.JSONDecodeError,
         InputValidationError,
     ) as rejection:
-        logger.error("input %s cannot be checked: %s", arguments.input, rejection)
+        # This handler covers the read, the parse and the whole run, so an
+        # unexpected `OSError` reaches it with nothing in the message to say which
+        # of the three raised it. `--verbose` is what asks for that traceback.
+        logger.critical(
+            "input %s cannot be checked: %s",
+            arguments.input,
+            rejection,
+            exc_info=arguments.verbose,
+        )
         return EXIT_INPUT_REJECTED
     except AuthenticationFailed as rejection:
-        logger.error("the run stopped: a credential was rejected: %s", rejection)
+        logger.critical("the run stopped: a credential was rejected: %s", rejection)
         return EXIT_CREDENTIAL_REJECTED
-    _write_output(arguments.output, output)
+    try:
+        _write_output(arguments.output, output)
+    except OSError as failure:
+        logger.critical("output %s cannot be written: %s", arguments.output, failure)
+        return EXIT_OUTPUT_UNWRITABLE
     return EXIT_OK
 
 

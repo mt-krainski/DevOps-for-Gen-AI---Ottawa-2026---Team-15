@@ -15,6 +15,9 @@ defaults:
   run:
     working-directory: packages/factchecker
 
+# Nothing here supplies a credential and nothing calls a model: every test in
+# this package runs against a checker the test injects. That is why no step
+# below carries an `env` or a `secrets` block.
 jobs:
   checks:
     name: Lint and test
@@ -22,21 +25,16 @@ jobs:
 
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
-
-      - name: Set up python
-        uses: actions/setup-python@v5
-        with:
-          python-version-file: packages/factchecker/.python-version
+        uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
           cache-dependency-glob: packages/factchecker/uv.lock
 
-      # No credential is supplied and no model is called: every test in this
-      # package runs against a checker the test injects.
+      # uv reads `.python-version` from this package and fetches that
+      # interpreter itself, so no separate action provisions one.
       - name: Sync the package
         run: uv sync --locked
 

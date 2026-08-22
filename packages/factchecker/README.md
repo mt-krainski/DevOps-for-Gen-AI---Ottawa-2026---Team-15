@@ -23,9 +23,12 @@ justification that says no search ran, and `meta.model` reads `offline`.
 - `0` — an output payload was written. Statements inside it may still carry errors.
 - `2` — the input could not be read, or it did not satisfy the contract.
 - `3` — a credential was rejected.
+- `4` — the payload was built, and it could not be written to the output path.
 
-A failed statement is a result the payload carries, so it leaves the exit code at zero. Codes `2`
-and `3` mean no payload exists, and no output file is written.
+A failed statement is a result the payload carries, so it leaves the exit code at zero. Each of the
+other codes names a different reason no output file holds a payload: the input, the credential, or
+the write. An unexpected crash exits `1`, so a failed write has a code of its own rather than that
+one.
 
 ### Logging
 
@@ -33,9 +36,12 @@ Every log record goes to stderr. The output file is the only place the payload i
 stdout stays empty.
 
 At INFO the tool writes one line for each statement, naming the statement, the elapsed time, and
-what became of it. `--verbose` raises the level to DEBUG. Without the flag the `LOG_LEVEL`
-environment variable names the level, and the level is INFO where that variable is unset or names no
-level the standard library knows.
+what became of it. `--verbose` raises the level to DEBUG, and prints the traceback under a rejected
+input. Without the flag the `LOG_LEVEL` environment variable names the level, and the level is INFO
+where that variable is unset or names no level the standard library knows.
+
+The reason a run ended is written at CRITICAL, so no setting of `LOG_LEVEL` can hide why a non-zero
+exit code was returned.
 
 A run that a rejected credential ends writes no line for the statements it cancelled. Those checks
 never finished, so there is nothing to report for them. That is the design, and not a missing
@@ -123,7 +129,9 @@ ISO 8601, which writes a zero UTC offset as `Z`.
 - `supported` — the evidence backs the claim.
 - `refuted` — the evidence contradicts the claim.
 - `mixed` — the claim is partly right, or the sources disagree with each other.
-- `unverifiable` — the search ran and the evidence does not settle the claim.
+- `unverifiable` — the search ran and the evidence does not settle the claim. In a build that ships
+  no checking agent, as this one does, no search runs and every factual statement comes back
+  `unverifiable`.
 
 `unverifiable` is a finding. A consumer that treats it as a failure misreads the output.
 

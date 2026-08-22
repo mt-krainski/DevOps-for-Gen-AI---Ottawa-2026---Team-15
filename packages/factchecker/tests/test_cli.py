@@ -136,6 +136,19 @@ def test_one_stderr_handler_is_attached_however_often_it_is_configured() -> None
     assert handlers[0].stream is sys.stderr
 
 
+def test_a_handler_the_host_attached_is_left_where_it_is() -> None:
+    """A library that detaches its host's handler breaks the host's own logging."""
+    logger = logging.getLogger(PACKAGE_LOGGER)
+    host_handler = logging.NullHandler()
+    logger.addHandler(host_handler)
+
+    configure_logging(verbose=False)
+    configure_logging(verbose=True)
+
+    assert host_handler in logger.handlers
+    assert len(logger.handlers) == 2
+
+
 def test_a_run_writes_the_output_payload_to_the_output_path(tmp_path: Path) -> None:
     """The round trip: a file of statements in, a file of rulings out, exit zero."""
     input_path = _input_file(tmp_path, {"statements": [_statement(), _opinion()]})
@@ -273,6 +286,60 @@ def test_a_rejected_credential_exits_three_and_writes_no_output(
     assert _run(input_path, output_path) == 3
 
     assert not output_path.exists()
+    assert "rejected the key" in capsys.readouterr().err
+
+
+def test_an_unwritable_output_path_exits_four(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The check produced a payload, so only the write failed, and 2 would be a lie."""
+    input_path = _input_file(tmp_path, {"statements": [_statement()]})
+    output_path = tmp_path / "absent" / "rulings.json"
+
+    assert _run(input_path, output_path) == 4
+
+    assert not output_path.exists()
+    stderr = capsys.readouterr().err
+    assert str(output_path) in stderr
+    assert "Traceback" not in stderr
+
+
+def test_verbose_puts_the_traceback_under_the_input_rejection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The flag's visible effect in this build, where nothing yet emits DEBUG."""
+    output_path = tmp_path / "rulings.json"
+
+    assert _run(tmp_path / "absent.json", output_path, "--verbose") == 2
+
+    stderr = capsys.readouterr().err
+    assert "Traceback" in stderr
+    assert "FileNotFoundError" in stderr
+
+
+def test_a_quietening_log_level_cannot_swallow_the_input_rejection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`LOG_LEVEL` quiets the per-statement chatter, not the reason the run ended."""
+    monkeypatch.setenv("LOG_LEVEL", "CRITICAL")
+    output_path = tmp_path / "rulings.json"
+
+    assert _run(tmp_path / "absent.json", output_path) == 2
+
+    assert "absent.json" in capsys.readouterr().err
+
+
+def test_a_quietening_log_level_cannot_swallow_the_credential_rejection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other fatal reason rides the same rule as the input rejection."""
+    monkeypatch.setenv("LOG_LEVEL", "CRITICAL")
+    monkeypatch.setattr(cli, "OfflineChecker", _RejectingChecker)
+    input_path = _input_file(tmp_path, {"statements": [_statement()]})
+    output_path = tmp_path / "rulings.json"
+
+    assert _run(input_path, output_path) == 3
+
     assert "rejected the key" in capsys.readouterr().err
 
 
