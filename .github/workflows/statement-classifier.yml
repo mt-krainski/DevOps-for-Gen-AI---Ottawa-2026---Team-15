@@ -1,0 +1,46 @@
+name: statement-classifier
+
+# The path filter keeps this package's checks independent of every other package
+# in the monorepo: a teammate's change never queues, or fails, this job.
+on:
+  pull_request:
+    paths:
+      - "packages/statement-classifier/**"
+      - ".github/workflows/statement-classifier.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/statement-classifier
+
+# The package calls a model at run time, but every test drives it through a fake
+# runnable and the two that exercise the credential path unset the variable. No
+# step below needs an `env` or a `secrets` block, and none should acquire one:
+# a live call in CI would make the checks depend on an upstream service.
+jobs:
+  checks:
+    name: Lint and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: packages/statement-classifier/uv.lock
+
+      # uv reads `.python-version` from this package and fetches that
+      # interpreter itself, so no separate action provisions one.
+      - name: Sync the package
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run poe lint
+
+      - name: Test
+        run: uv run poe test
