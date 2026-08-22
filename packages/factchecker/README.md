@@ -189,13 +189,20 @@ A checking agent plugs into one seam, `factchecker/checker.py`:
 - `OfflineChecker` is the stand-in this build runs in place of a checking agent, with the behaviour
   described at the top of this document.
 
-The orchestrator holds an implementation to two rules:
+The orchestrator holds an implementation to three rules:
 
 - Raising `AuthenticationFailed`, from `factchecker/errors.py`, ends the whole run, because a
-  rejected credential fails every statement alike. Any other exception becomes that one statement's
-  `check_failed` error, and the run carries on with the statements that are left.
-- Your `check` coroutine is what gets cancelled at the per-statement limit under Limits, so it must
-  tolerate cancellation partway.
+  rejected credential fails every statement alike.
+- Raising `CheckFailed`, from the same module, fails that one statement under the `kind` the
+  exception carries, rather than under `check_failed`. Reach for it when the caller should read one
+  failure differently from another: a ruling that will not parse asks for a different response than
+  a dropped connection does. Write the message yourself. It reaches the output payload, so nothing
+  an upstream library wrote belongs in it.
+- Any other exception becomes that one statement's `check_failed` error, and the run carries on
+  with the statements that are left.
+
+Your `check` coroutine is also what gets cancelled at the per-statement limit under Limits, so it
+must tolerate cancellation partway.
 
 ## Development
 

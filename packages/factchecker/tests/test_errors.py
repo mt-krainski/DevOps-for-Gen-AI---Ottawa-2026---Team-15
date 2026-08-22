@@ -2,6 +2,7 @@
 
 from factchecker.errors import (
     AuthenticationFailed,
+    CheckFailed,
     InputValidationError,
     McpCallError,
 )
@@ -40,3 +41,18 @@ def test_mcp_call_error_carries_its_message() -> None:
 def test_mcp_call_error_is_not_an_authentication_failure() -> None:
     """One failed tool call fails its own statement; it does not end the run."""
     assert not isinstance(McpCallError("returned 422"), AuthenticationFailed)
+
+
+def test_check_failed_carries_its_own_kind_and_message() -> None:
+    """A checker names its failure, rather than accept the kind the run assigns."""
+    error = CheckFailed("malformed_ruling", "the ruling did not validate")
+
+    assert isinstance(error, Exception)
+    assert error.kind == "malformed_ruling"
+    assert error.message == "the ruling did not validate"
+    assert str(error) == "the ruling did not validate"
+
+
+def test_check_failed_is_not_an_authentication_failure() -> None:
+    """A named failure fails its own statement; it does not end the run."""
+    assert not isinstance(CheckFailed("malformed_ruling", "no"), AuthenticationFailed)

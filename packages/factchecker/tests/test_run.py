@@ -9,7 +9,11 @@ from datetime import UTC, datetime
 import pytest
 
 from factchecker.checker import CheckOutcome, OfflineChecker, StatementChecker
-from factchecker.errors import AuthenticationFailed, InputValidationError
+from factchecker.errors import (
+    AuthenticationFailed,
+    CheckFailed,
+    InputValidationError,
+)
 from factchecker.models import (
     IdentifiedStatement,
     InputPayload,
@@ -352,6 +356,32 @@ def test_a_checker_exception_becomes_an_error_and_the_run_continues() -> None:
     assert "the upstream service said no" in failed.error.message
     assert checked.ruling is not None
     assert checked.error is None
+
+
+def test_a_check_failed_reaches_the_output_under_its_own_kind() -> None:
+    """A checker that names its failure keeps the name, rather than `check_failed`."""
+    checker = _ScriptedChecker(
+        {
+            "s1": CheckFailed("malformed_ruling", "the ruling did not validate"),
+            "s2": RuntimeError("the upstream service said no"),
+        }
+    )
+
+    result = asyncio.run(
+        run_check(
+            _payload("fact", "fact"),
+            checker,
+            _settings(),
+            _clock(STARTED_AT, FINISHED_AT),
+        )
+    )
+
+    named, blanket = result.statements
+    assert named.error is not None
+    assert named.error.kind == "malformed_ruling"
+    assert named.error.message == "the ruling did not validate"
+    assert blanket.error is not None
+    assert blanket.error.kind == "check_failed"
 
 
 def test_authentication_failure_ends_the_run_without_waiting_for_the_rest() -> None:
