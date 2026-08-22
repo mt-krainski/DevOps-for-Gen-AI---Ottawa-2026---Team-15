@@ -645,10 +645,10 @@ def test_one_cache_and_one_tool_set_serve_every_statement(
     recorded: list[tuple[object, object, object, object]] = []
 
     def _recording_instrument(
-        tools: object, cache: object, settings: object, sleep: object
-    ) -> list[object]:
+        tools: Sequence[BaseTool], cache: object, settings: object, sleep: object
+    ) -> list[BaseTool]:
         recorded.append((tools, cache, settings, sleep))
-        return list(tools)  # type: ignore[call-overload]
+        return list(tools)
 
     monkeypatch.setattr(cli, "instrument", _recording_instrument)
     input_path = _input_file(
@@ -657,8 +657,8 @@ def test_one_cache_and_one_tool_set_serve_every_statement(
 
     assert _run(input_path, tmp_path / "rulings.json") == 0
 
-    (tools, cache, settings, sleep) = recorded[0]
     assert len(recorded) == 1
+    (tools, cache, settings, sleep) = recorded[0]
     assert tools == [offered]
     assert isinstance(cache, RunCache)
     assert isinstance(settings, Settings)
