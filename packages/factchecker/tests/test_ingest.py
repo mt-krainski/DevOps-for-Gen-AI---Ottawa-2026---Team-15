@@ -73,11 +73,13 @@ def test_parse_input_names_a_rejected_field_and_its_value() -> None:
 
 
 def test_parse_input_rejects_a_payload_that_is_not_the_input_shape() -> None:
-    """A payload with no statements key is rejected by name."""
+    """A payload with no statements key is named as absent, like any missing key."""
     with pytest.raises(InputValidationError) as rejection:
         parse_input({})
 
-    assert "statements" in str(rejection.value)
+    message = str(rejection.value)
+    assert "statements" in message
+    assert "absent" in message
 
 
 def test_assign_ids_numbers_statements_that_carry_no_identifier() -> None:

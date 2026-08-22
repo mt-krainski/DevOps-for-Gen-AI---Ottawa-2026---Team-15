@@ -1,7 +1,7 @@
 """The checker seam: what a checking agent returns, and the offline stand-in."""
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from factchecker.models import IdentifiedStatement, Ruling
 
@@ -16,8 +16,14 @@ class CheckOutcome:
     searches: int
 
 
+@runtime_checkable
 class StatementChecker(Protocol):
-    """The seam the searching agent implements."""
+    """The seam the searching agent implements.
+
+    Runtime-checkable so that an implementation can be asserted against the seam by
+    `isinstance`. No type checker runs over this package, so that assertion is the
+    only thing binding an implementation to the protocol.
+    """
 
     async def check(self, statement: IdentifiedStatement) -> CheckOutcome:
         """Check one statement.

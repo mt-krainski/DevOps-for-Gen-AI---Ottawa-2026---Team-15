@@ -36,10 +36,11 @@ class RunSettings:
 
 @dataclass(frozen=True)
 class _StatementResult:
-    """One statement's output entry, beside the outcome the entry cannot carry."""
+    """One statement's output entry, what it consumed, and how its log record reads."""
 
     entry: OutputStatement
-    outcome: CheckOutcome | None
+    usage: Usage | None
+    summary: str
 
 
 async def run_check(
@@ -109,7 +110,7 @@ async def _check_one(
     started = time.monotonic()
     result = await _settle(statement, checker, settings, semaphore)
     logger.info(
-        "%s in %.3fs: %s", statement.id, time.monotonic() - started, _summarize(result)
+        "%s in %.3fs: %s", statement.id, time.monotonic() - started, result.summary
     )
     return result
 
@@ -122,29 +123,33 @@ async def _settle(
 ) -> _StatementResult:
     """Pass a fact to the checker under the bound and the limit; skip an opinion."""
     if statement.classification.class_ == "opinion":
-        return _StatementResult(entry=_entry(statement), outcome=None)
+        return _StatementResult(entry=_entry(statement), usage=None, summary="skipped")
 
     async with semaphore:
         try:
-            async with asyncio.timeout(settings.statement_timeout_seconds):
+            async with asyncio.timeout(settings.statement_timeout_seconds) as limit:
                 outcome = await checker.check(statement)
-        except TimeoutError:
-            return _failure(
-                statement,
-                kind="timeout",
-                message=(
-                    "the check exceeded the per-statement limit of "
-                    f"{settings.statement_timeout_seconds} seconds"
-                ),
-            )
+            # `_ruled` reads the outcome apart here, inside the `try` rather than in
+            # an `else`: nothing validates a `CheckOutcome` at runtime, so a malformed
+            # one has to fail its own check instead of escaping the task group.
+            return _ruled(statement, outcome)
+        except TimeoutError as exc:
+            if limit.expired():
+                return _failure(
+                    statement,
+                    kind="timeout",
+                    message=(
+                        "the check exceeded the per-statement limit of "
+                        f"{settings.statement_timeout_seconds} seconds"
+                    ),
+                )
+            # `socket.timeout` and `asyncio.TimeoutError` are both `TimeoutError`, so
+            # a checker's own read timeout arrives here without the limit expiring.
+            return _failure(statement, kind="check_failed", message=str(exc))
         except AuthenticationFailed:
             raise
         except Exception as exc:  # noqa: BLE001 — a failed check must not end the run
             return _failure(statement, kind="check_failed", message=str(exc))
-        else:
-            return _StatementResult(
-                entry=_entry(statement, ruling=outcome.ruling), outcome=outcome
-            )
 
 
 def _entry(
@@ -163,23 +168,28 @@ def _entry(
     )
 
 
+def _ruled(statement: IdentifiedStatement, outcome: CheckOutcome) -> _StatementResult:
+    """Read a checker's outcome apart into the entry, the usage, and the log line."""
+    return _StatementResult(
+        entry=_entry(statement, ruling=outcome.ruling),
+        usage=Usage(
+            prompt_tokens=outcome.prompt_tokens,
+            completion_tokens=outcome.completion_tokens,
+            searches=outcome.searches,
+        ),
+        summary=f"{outcome.ruling.verdict}, {outcome.searches} searches",
+    )
+
+
 def _failure(
     statement: IdentifiedStatement, kind: str, message: str
 ) -> _StatementResult:
     """A statement the run could not rule on: an error, and never a ruling."""
     return _StatementResult(
         entry=_entry(statement, error=CheckError(kind=kind, message=message)),
-        outcome=None,
+        usage=None,
+        summary=f"failed: {kind}",
     )
-
-
-def _summarize(result: _StatementResult) -> str:
-    """Say what became of one statement, for its log record."""
-    if result.outcome is not None:
-        return f"{result.outcome.ruling.verdict}, {result.outcome.searches} searches"
-    if result.entry.error is not None:
-        return f"failed: {result.entry.error.kind}"
-    return "skipped"
 
 
 def _count(entries: Sequence[OutputStatement]) -> Counts:
@@ -194,9 +204,9 @@ def _count(entries: Sequence[OutputStatement]) -> Counts:
 
 def _total_usage(results: Sequence[_StatementResult]) -> Usage:
     """Add up what the checks consumed."""
-    outcomes = [result.outcome for result in results if result.outcome is not None]
+    consumed = [result.usage for result in results if result.usage is not None]
     return Usage(
-        prompt_tokens=sum(outcome.prompt_tokens for outcome in outcomes),
-        completion_tokens=sum(outcome.completion_tokens for outcome in outcomes),
-        searches=sum(outcome.searches for outcome in outcomes),
+        prompt_tokens=sum(usage.prompt_tokens for usage in consumed),
+        completion_tokens=sum(usage.completion_tokens for usage in consumed),
+        searches=sum(usage.searches for usage in consumed),
     )

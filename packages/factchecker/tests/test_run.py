@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from factchecker.checker import CheckOutcome, OfflineChecker
+from factchecker.checker import CheckOutcome, OfflineChecker, StatementChecker
 from factchecker.errors import AuthenticationFailed, InputValidationError
 from factchecker.models import (
     IdentifiedStatement,
@@ -138,6 +138,23 @@ class _CredentialRejectingChecker:
         raise AssertionError("the event is never set")
 
 
+class _MalformedChecker:
+    """Returns an outcome that does not hold what `CheckOutcome` says it holds."""
+
+    async def check(self, statement: IdentifiedStatement) -> CheckOutcome:
+        """Return a rulingless outcome.
+
+        `CheckOutcome` is a plain dataclass, so `ruling: Ruling` is a promise nothing
+        enforces at runtime. Any checker a later work item writes can break it.
+        """
+        return CheckOutcome(
+            ruling=None,
+            prompt_tokens=0,
+            completion_tokens=0,
+            searches=0,
+        )
+
+
 class _DelayedChecker:
     """Finishes each statement after its own delay, and records the finishing order."""
 
@@ -193,6 +210,11 @@ def test_the_offline_checker_rules_unverifiable_without_searching() -> None:
         0,
         0,
     )
+
+
+def test_the_offline_checker_satisfies_the_statement_checker_protocol() -> None:
+    """The stand-in is published as implementing the seam; this is what checks it."""
+    assert isinstance(OfflineChecker(), StatementChecker)
 
 
 def test_an_opinion_statement_never_reaches_the_checker() -> None:
@@ -269,6 +291,48 @@ def test_a_check_that_exceeds_the_timeout_is_cancelled() -> None:
         return list(checker.cancelled)
 
     assert asyncio.run(drive()) == ["s1"]
+
+
+def test_a_timeout_error_the_checker_raised_itself_is_a_failed_check() -> None:
+    """The run's limit was never reached, so the entry must not claim it was."""
+    checker = _ScriptedChecker({"s1": TimeoutError("the read timed out")})
+
+    result = asyncio.run(
+        run_check(
+            _payload("fact"),
+            checker,
+            _settings(statement_timeout_seconds=240.0),
+            _clock(STARTED_AT, FINISHED_AT),
+        )
+    )
+
+    entry = result.statements[0]
+    assert entry.ruling is None
+    assert entry.error is not None
+    assert entry.error.kind == "check_failed"
+    assert "the read timed out" in entry.error.message
+    assert "240.0" not in entry.error.message
+
+
+def test_an_outcome_the_seam_does_not_validate_becomes_a_failed_check() -> None:
+    """A checker may hand back a malformed outcome, which must not end the run."""
+    checker = _MalformedChecker()
+
+    result = asyncio.run(
+        run_check(
+            _payload("fact"),
+            checker,
+            _settings(),
+            _clock(STARTED_AT, FINISHED_AT),
+        )
+    )
+
+    entry = result.statements[0]
+    assert entry.ruling is None
+    assert entry.error is not None
+    assert entry.error.kind == "check_failed"
+    counts = result.meta.counts
+    assert (counts.total, counts.checked, counts.skipped, counts.failed) == (1, 0, 0, 1)
 
 
 def test_a_checker_exception_becomes_an_error_and_the_run_continues() -> None:
