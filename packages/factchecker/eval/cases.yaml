@@ -1,0 +1,187 @@
+# The nineteen cases the evaluation suite scores. `promptfooconfig.yaml` holds the
+# assertions; every case here is data.
+#
+# Every claim anchors to a dated event, never to a present state, so a case cannot
+# change its own answer and rot the suite.
+#
+# The refuted cases alter exactly one checkable detail of a real story. The altered
+# detail is named in the description, so the expected verdict is defensible rather
+# than a matter of taste.
+#
+# The sources under each case are where its ground truth was read. Nothing reads them
+# at run time: they are here for the person re-checking a case the suite marks wrong.
+# ---- supported ----
+
+# Source: https://www.espn.com/soccer/match/_/gameId/760517/argentina-spain
+- description: "supported: the 2026 World Cup final"
+  vars:
+    statement: "On July 19, 2026, Spain defeated Argentina 1-0 to win the FIFA World Cup, with Ferran Torres scoring the decisive goal in extra time."
+    surroundingContext: "The 2026 FIFA World Cup final at MetLife Stadium delivered a thrilling contest between two football powerhouses. Spain's second World Cup title came after 16 years without the trophy, ending Argentina's reign as defending champions."
+    expectedVerdict: supported
+
+# Source: https://www.aljazeera.com/sports/2026/7/27/tadej-pogacar-tour-de-france-2026-cycling-record-fifth-title
+- description: "supported: the 2026 Tour de France"
+  vars:
+    statement: "Tadej Pogacar won the 2026 Tour de France for his fifth title, finishing on July 26 with a margin of 6 minutes and 26 seconds over Remco Evenepoel."
+    surroundingContext: "The Slovenian dominated the three-week race, extending his advantage through attacks in the mountain stages. His victory tied the all-time record for Tour de France wins."
+    expectedVerdict: supported
+
+# Source: https://www.cnn.com/2026/07/20/world/live-news/andy-burnham-uk-prime-minister-intl
+- description: "supported: the change of British prime minister"
+  vars:
+    statement: "Andy Burnham became Prime Minister of the United Kingdom on July 20, 2026, succeeding Keir Starmer after being elected Labour leader three days earlier."
+    surroundingContext: "Burnham's appointment marked a significant moment in British politics as the nation sought renewed stability. His first remarks emphasised the need to regain stability and outlined a ten-year economic framework."
+    expectedVerdict: supported
+
+# Source: https://science.nasa.gov/eclipses/future-eclipses/total-solar-eclipse-on-august-12-2026/
+- description: "supported: the total solar eclipse of August 2026"
+  vars:
+    statement: "A total solar eclipse passed over eastern Greenland, western Iceland, Portugal and northern Spain on August 12, 2026, with maximum eclipse at 5:46 p.m. UTC."
+    surroundingContext: "Astronomers worldwide prepared for the rare celestial event, some organising expeditions along the path. The eclipse's north-polar route meant totality lasted up to 2 minutes and 18 seconds on the centre line."
+    expectedVerdict: supported
+
+# Source: https://www.olympics.com/en/news/wimbledon-2026-womens-singles-final-results-karolina-muchova-linda-noskova
+- description: "supported: the 2026 Wimbledon ladies' singles final"
+  vars:
+    statement: "Linda Noskova won the 2026 Wimbledon ladies' singles title, defeating Karolina Muchova 6-2, 5-7, 6-3."
+    surroundingContext: "The all-Czech final marked a historic achievement for Czech tennis, with Noskova claiming her first Grand Slam title. Her victory positioned her among the sport's emerging champions."
+    expectedVerdict: supported
+
+# Source: https://www.euronews.com/2026/07/19/england-beat-france-6-4-in-world-cup-third-place-thriller
+- description: "supported: the World Cup third-place playoff"
+  vars:
+    statement: "England finished third at the 2026 FIFA World Cup after defeating France 6-4 on July 18 in Miami."
+    surroundingContext: "The third-place playoff delivered an extraordinary display of attacking football, producing the most goals ever in a World Cup third-place match. England secured their best World Cup result since 1966."
+    expectedVerdict: supported
+
+# ---- refuted: one checkable detail altered ----
+
+# Source: https://www.npr.org/2026/07/26/nx-s1-5908503/tadej-pogacar-tour-de-france-2026-winner-wildfires
+- description: "refuted: the margin was 6:26, not 6:24"
+  vars:
+    statement: "Tadej Pogacar won the 2026 Tour de France on July 26 with a final margin of victory of 6 minutes and 24 seconds."
+    surroundingContext: "The Slovenian's dominant performance secured his fifth Tour title, equalling the all-time record. Reporters marvelled at his control throughout the race."
+    expectedVerdict: refuted
+
+# Source: https://www.cnn.com/2026/07/20/world/live-news/andy-burnham-uk-prime-minister-intl
+- description: "refuted: he took office on July 20, not July 19"
+  vars:
+    statement: "Andy Burnham became Prime Minister of the United Kingdom on July 19, 2026."
+    surroundingContext: "The Labour politician took office within hours of the party election, moving quickly into Number 10 to address mounting economic challenges."
+    expectedVerdict: refuted
+
+# Source: https://www.wtatennis.com/news/4533700/at-21-linda-noskova-caps-brilliant-fortnight-to-become-youngest-wimbledon-champion-in-15-years-defeats-karolina-muchova
+- description: "refuted: the scoreline was 6-2, 5-7, 6-3"
+  vars:
+    statement: "Linda Noskova defeated Karolina Muchova 6-2, 6-7, 5-3 to win the 2026 Wimbledon ladies' singles championship."
+    surroundingContext: "The Czech rivals faced off in an all-Czech final that tested both players' endurance. The match turned in the second set before Noskova secured her breakthrough title."
+    expectedVerdict: refuted
+
+# Source: https://www.pbs.org/newshour/world/photos-spain-wins-the-world-cup-by-beating-argentina-1-0-on-ferran-torres-goal-in-extra-time
+- description: "refuted: the goal came in the 106th minute"
+  vars:
+    statement: "Ferran Torres scored the World Cup-winning goal for Spain against Argentina in the 105th minute of the final on July 19, 2026."
+    surroundingContext: "The Spanish forward showed composure under pressure by finishing a chance in the extra period. His strike proved decisive in claiming Spain's second World Cup title."
+    expectedVerdict: refuted
+
+# Source: https://science.nasa.gov/eclipses/future-eclipses/total-solar-eclipse-on-august-12-2026/
+- description: "refuted: the eclipse was on August 12, not August 13"
+  vars:
+    statement: "A total solar eclipse passed over Greenland, Iceland, Portugal and northern Spain on August 13, 2026."
+    surroundingContext: "Scientists and amateur astronomers converged on the eclipse path to witness the phenomenon. Observatories across the Northern Hemisphere prepared instruments to capture data."
+    expectedVerdict: refuted
+
+# ---- mixed: one true half, one false half ----
+
+# Source: https://www.npr.org/2026/07/01/nx-s1-5877257/mexico-beats-ecuador-advance-world-cup
+- description: "mixed: the Ecuador result is real, the run to the final is not"
+  vars:
+    statement: "Mexico defeated Ecuador 2-0 in the 2026 FIFA World Cup on July 1 and went on to reach the World Cup final."
+    surroundingContext: "Mexican fans celebrated as their team ended a 40-year drought in World Cup knockout matches. The victory sparked national jubilation and raised hopes for a deep tournament run."
+    expectedVerdict: mixed
+
+# Source: https://techcrunch.com/2026/07/30/okta-buys-ai-security-startup-permiso-source-says-for-about-200m/
+- description: "mixed: the acquisition is real, the price is not"
+  vars:
+    statement: "Okta completed its acquisition of Permiso Security for $300 million in July 2026 to expand into identity threat detection for AI agents."
+    surroundingContext: "The cybersecurity deal reflected growing concern about threats posed by autonomous systems in business environments. Okta's leadership described the purchase as critical to protecting against emerging AI-driven risks."
+    expectedVerdict: mixed
+
+# ---- unverifiable: searchable in principle, not settleable ----
+
+# Source: https://www.cnn.com/2026/07/20/world/live-news/andy-burnham-uk-prime-minister-intl
+- description: "unverifiable: a private conversation no source records"
+  vars:
+    statement: "Andy Burnham privately told his closest advisers in late June 2026 that he intended to pursue a full ten-year economic restructuring plan from the moment he assumed office."
+    surroundingContext: "Sources in Burnham's inner circle suggest the Prime Minister had been strategising his approach well before the leadership election. Few details of his private deliberations reached the public."
+    expectedVerdict: unverifiable
+
+# Source: https://www.whitehouse.gov/fact-sheets/2026/07/fact-sheet-president-donald-j-trump-imposes-additional-tariffs-on-canada/
+- description: "unverifiable: the tariffs are documented, the motive is not"
+  vars:
+    statement: "The United States imposed 50% tariffs on Canadian goods in July 2026 specifically to pressure Canada into renegotiating key sections of the USMCA trade deal."
+    surroundingContext: "Officials described the tariffs as a tool to rebalance trade relationships. Observers debated whether the move would achieve its stated goals or trigger retaliation."
+    expectedVerdict: unverifiable
+
+# Source: https://www.commonwealthsport.com/commonwealth-games/glasgow-2026
+- description: "unverifiable: no comparative viewership figure is published"
+  vars:
+    statement: "The 2026 Glasgow Commonwealth Games drew television audiences 15% larger than the 2022 Birmingham Commonwealth Games."
+    surroundingContext: "Broadcasters noted strong viewership from preliminary events as athletes from 74 nations competed. Analysts attributed higher numbers to better scheduling and production quality."
+    expectedVerdict: unverifiable
+
+# ---- traps ----
+#
+# A source that shares names, numbers and vocabulary with the claim, and that a
+# careless read takes for confirmation. This is the failure the suite most wants to
+# catch: topical overlap mistaken for support.
+
+# Pattern: transferred-attribute.
+# Careless: 14.7 percent is the figure every search for April 2020 unemployment returns, from authoritative sources.
+# Correct: 14.7 percent was the economy-wide rate; the rate for ages 16 to 19 was 31.9 percent.
+# Stability: a dated monthly BLS release; historical statistics do not move.
+# Source: https://www.bls.gov/opub/ted/youth.htm
+# Source: https://www.cnbc.com/2020/05/08/jobs-report-april-2020.html
+- description: "refuted trap: 14.7 percent is the economy-wide rate, not the teenage one"
+  vars:
+    statement: "In April 2020, the United States experienced a teenage unemployment rate of 14.7 percent."
+    surroundingContext: "The COVID-19 pandemic created unprecedented disruption to labor markets in the spring of 2020. The April jobs report was striking for the scale of job losses and the breadth of groups affected. Unemployment spiked across the country, affecting workers at every age and experience level."
+    expectedVerdict: refuted
+
+# Pattern: near-miss-event.
+# Careless: he did win three titles, and his name sits beside 400 and freestyle throughout the results.
+# Correct: the third title was the 400m individual medley, not the 400m freestyle, which Luka Mijatovic won.
+# Stability: a completed championship result; the placings are settled.
+# Source: https://www.nbcsports.com/olympics/news/usa-swimming-national-championships-results-2026
+# Source: https://swimswam.com/luka-mijatovic-blasts-343-45-400-free-becomes-5-all-time-us-performer-at-2026-us-nationals
+- description: "refuted trap: the third title was the 400m individual medley"
+  vars:
+    statement: "Ryan Erisman secured three national titles at the 2026 USA Swimming National Championships across the 400m freestyle, 800m freestyle, and 200m freestyle."
+    surroundingContext: "The 2026 USA Swimming National Championships featured an exceptional showing from rising talent. Distance and mid-distance freestyle events saw fierce competition, with swimmers posting personal bests. Several swimmers claimed multiple titles across closely related events."
+    expectedVerdict: refuted
+
+# Pattern: unstated-causal-link.
+# Careless: both halves of the claim are documented, so the causal join between them reads as documented too.
+# Correct: the sending-off happened and Mexico won 2-0, but no source supports the claim that one caused the other.
+# Stability: a completed match; the competition name is confirmed correct as the CONCACAF U-20 Championship.
+# Source: https://www.frontrowsoccer.com/2026/08/10/second-best-10-man-u-s-lose-to-mexico-in-concacaf-u-20-finale/
+- description: "unverifiable trap: both halves are documented, the join between them is not"
+  vars:
+    statement: "The United States lost the 2026 CONCACAF U-20 Championship final 2-0 to Mexico because the team played the entire second half with 10 players after a sending-off in the opening moments."
+    surroundingContext: "The 2026 CONCACAF U-20 Championship concluded on August 9 at Estadio Azteca before 36,000 fans. The United States faced Mexico with the winner qualifying for the 2027 FIFA U-20 World Cup. The match unfolded with dramatic turns."
+    expectedVerdict: unverifiable
+
+# Three traps, not four. The superseded-figure pattern -- a claim citing a figure that
+# was later officially revised -- is not represented, after three attempts to source
+# one failed the same test in three disguises. A swimming record was still moving, so
+# the right answer moved with it. Everest's 8,848m against its revised 8,848.86m is a
+# correct rounding, so `supported` is defensible. A restated GDP figure was measured
+# under the standard of its day, so it was never wrong either.
+#
+# The bar a candidate has to clear: could a reasonable person defend the stale figure
+# as still correct? If yes, the case has two defensible answers and cannot be scored
+# by exact match.
+#
+# This leaves one real fact-checker failure -- trusting stale data -- unmeasured by
+# this suite. That is a known gap in coverage, not a defect in the cases.
+

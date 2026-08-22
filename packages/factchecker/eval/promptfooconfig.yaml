@@ -1,0 +1,38 @@
+# The evaluation suite. It runs by hand and never on a push: every case spends real
+# money at OpenRouter and real requests at Bright Data.
+#
+# Scoring is exact and deterministic, and no assertion is model-graded. A verdict is
+# one of four words, which is what makes it checkable by comparison rather than by
+# judgement.
+#
+# Nothing asserts on the justification, the references or the confidence. That keeps
+# the suite small and cheap, and it leaves one blind spot worth remembering when
+# reading a score: a case that guesses the right verdict with no evidence behind it
+# scores exactly like one that did the work.
+
+description: factchecker verdict accuracy
+
+providers:
+  # The interpreter has to be the package's own, because the provider imports
+  # `factchecker`. This path is relative to the directory promptfoo is started from,
+  # which the README says is this one.
+  - id: file://provider.py
+    label: factchecker
+    config:
+      pythonExecutable: ../.venv/bin/python
+
+# The provider writes its own prompts from the statement and its surrounding context,
+# so nothing sends this one anywhere. promptfoo requires a prompt, and this is the
+# shortest honest one.
+prompts:
+  - "{{statement}}"
+
+# Two assertions per case and no more. promptfoo offers no JSONPath selector, so
+# reading a field out of the ruling goes through JavaScript.
+defaultTest:
+  assert:
+    - type: is-json
+    - type: javascript
+      value: JSON.parse(output).verdict === context.vars.expectedVerdict
+
+tests: file://cases.yaml
