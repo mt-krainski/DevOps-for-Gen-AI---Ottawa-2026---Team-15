@@ -49,9 +49,8 @@ async def call_api(
         case that could not be checked carries an empty output beside an `error`,
         which fails that case and leaves the rest of the suite to run.
     """
-    variables = context.get("vars")
     try:
-        ruling = await _ruled(_statement(variables))
+        ruling = await _ruled(_statement(context.get("vars")))
     except Exception as failure:  # noqa: BLE001 — one case's failure is not the suite's
         return {"output": "", "error": f"{type(failure).__name__}: {failure}"}
     return {"output": ruling}
