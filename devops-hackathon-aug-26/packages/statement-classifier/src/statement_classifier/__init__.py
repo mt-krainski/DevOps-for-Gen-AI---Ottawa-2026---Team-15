@@ -1,4 +1,23 @@
-from statement_classifier.classifier import classify_statement
-from statement_classifier.models import Classification, Statement
+from statement_classifier.errors import ClassifierError, ErrorCode
+from statement_classifier.models import (
+    Classification,
+    ClassifierInput,
+    ClassifierOutput,
+    ClassifiedStatement,
+    Statement,
+    StatementError,
+)
+from statement_classifier.service import classify_statements, classify_statements_sync
 
-__all__ = ["Classification", "Statement", "classify_statement"]
+__all__ = [
+    "Classification",
+    "ClassifierError",
+    "ClassifierInput",
+    "ClassifierOutput",
+    "ClassifiedStatement",
+    "ErrorCode",
+    "Statement",
+    "StatementError",
+    "classify_statements",
+    "classify_statements_sync",
+]
