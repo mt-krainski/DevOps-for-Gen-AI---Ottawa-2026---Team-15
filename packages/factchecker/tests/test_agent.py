@@ -10,11 +10,12 @@ The scripts are keyed on the claim rather than on call order, which is what lets
 its own place in its own script.
 
 A stand-in model cannot see what the real client does with what the checker bound to
-it, and the two things that path gets wrong — a tool the OpenAI SDK refuses to send,
-and a ruling the SDK parses before this package can — both raise inside the client
-rather than in this package. So the tests at the end of this file drive a real
-`ChatOpenAI` over an `httpx.MockTransport`. That exercises payload construction, tool
-validation, response parsing and the usage object, and it opens no socket.
+it, and the three things that path gets wrong — a tool the OpenAI SDK refuses to send,
+a ruling the SDK parses before this package can, and a schema on a request that was
+meant to carry a tool call — reach a stand-in as nothing at all. So the tests at the
+end of this file drive a real `ChatOpenAI` over an `httpx.MockTransport`. That
+exercises payload construction, tool validation, response parsing and the usage
+object, and it opens no socket.
 """
 
 import asyncio
@@ -118,6 +119,19 @@ def _ai(
     )
 
 
+def _done(prompt_tokens: int = 0, completion_tokens: int = 0) -> AIMessage:
+    """The answer that ends the searching turns: no tool call, and no ruling either.
+
+    The searching turns end when the model stops asking for a tool. The ruling is
+    asked for after that, in a request of its own.
+    """
+    return _ai(
+        "I have the evidence I need.",
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
+
+
 def _search(query: str = "boiling point of water", call_id: str = "c1") -> ToolCall:
     """A request for one search, as the model writes it."""
     return tool_call(name=SEARCH_TOOL_NAME, args={"query": query}, id=call_id)
@@ -138,12 +152,16 @@ class _Model:
     def __init__(self, scripts: Mapping[str, Sequence[AIMessage]]) -> None:
         self.scripts = scripts
         self.turns: list[list[BaseMessage]] = []
-        self.bound: dict[str, object] = {}
+        self.bindings: list[dict[str, object]] = []
         self._served: dict[str, int] = {}
 
     def bind_tools(self, tools: Sequence[BaseTool], **bound: object) -> Self:
-        """Record what the checker bound, and stand in for the bound model."""
-        self.bound = {"tools": list(tools), **bound}
+        """Record one binding the checker made, and stand in for the bound model.
+
+        The checker makes two, and a stand-in that answers from a script tells them
+        apart by what each was bound with rather than by which object came back.
+        """
+        self.bindings.append({"tools": list(tools), **bound})
         return self
 
     async def ainvoke(self, messages: Sequence[BaseMessage]) -> AIMessage:
@@ -323,11 +341,11 @@ class _Gateway:
             http_async_client=httpx.AsyncClient(transport=httpx.MockTransport(self)),
         )
 
-    def tool_named(self, name: str) -> dict[str, object]:
-        """The first request's entry for the named tool, as it went on the wire."""
+    def tool_named(self, name: str, request: int = 0) -> dict[str, object]:
+        """One request's entry for the named tool, as it went on the wire."""
         return next(
             one["function"]
-            for one in self.sent[0]["tools"]
+            for one in self.sent[request]["tools"]
             if one["function"]["name"] == name
         )
 
@@ -347,8 +365,19 @@ def _statement(claim: str = CLAIM, identifier: str = "s1") -> IdentifiedStatemen
 
 
 def _reminder(turn: Sequence[BaseMessage]) -> str:
-    """The budget reminder a turn was given, which is always its last message."""
+    """The message a turn rides on, which is always the last one it carries."""
     return str(turn[-1].content)
+
+
+def _answer(turn: Sequence[BaseMessage]) -> str:
+    """The one tool answer a turn carries.
+
+    Read by scanning rather than by position: the searching turns that follow a tool
+    call leave their own answers in the conversation behind it.
+    """
+    answers = [one for one in turn if isinstance(one, ToolMessage)]
+    assert len(answers) == 1
+    return str(answers[0].content)
 
 
 def _unanswered(turn: Sequence[BaseMessage]) -> list[str]:
@@ -378,35 +407,71 @@ def test_the_agent_checker_satisfies_the_statement_checker_protocol() -> None:
     assert isinstance(checker, StatementChecker)
 
 
-def test_the_model_is_bound_to_the_tools_and_the_ruling_schema() -> None:
-    """Binding happens once, in the constructor, and not per statement.
+def test_the_searching_binding_carries_the_tools_and_no_ruling_schema() -> None:
+    """The defect this file guards: a schema on a searching turn forbids a tool call.
 
-    The ruling schema is bound as a schema document rather than as the `Ruling` class.
-    Given the class, the OpenAI client parses the answer itself and a malformed one
-    raises out of `ainvoke`, where the retry this package owns cannot reach it.
+    A `json_schema` `response_format` and a tool call are mutually exclusive on one
+    request. The answer is constrained to the ruling schema, and a tool call is not a
+    member of that schema, so a model bound to it on every turn never searches at all.
     """
     model = _Model({CLAIM: [_ai(_ruling_text())]})
     tools = _Tools()
 
     AgentChecker(model, tools.tools, _settings())
 
-    assert model.bound["tools"] == tools.tools
-    response_format = model.bound["response_format"]
+    searching = model.bindings[0]
+    assert searching["tools"] == tools.tools
+    assert "response_format" not in searching
+    assert "tool_choice" not in searching
+
+
+def test_the_ruling_binding_carries_the_schema_and_forbids_a_tool_call() -> None:
+    """The other half of the split, and what keeps a tool call out of the ruling turn.
+
+    The ruling schema is bound as a schema document rather than as the `Ruling` class.
+    Given the class, the OpenAI client parses the answer itself and a malformed one
+    raises out of `ainvoke`, where the retry this package owns cannot reach it.
+
+    The tools are bound here as well, because the conversation this turn is sent holds
+    their calls and their answers. `tool_choice` is what stops another being asked
+    for.
+    """
+    model = _Model({CLAIM: [_ai(_ruling_text())]})
+    tools = _Tools()
+
+    AgentChecker(model, tools.tools, _settings())
+
+    ruling = model.bindings[1]
+    assert ruling["tools"] == tools.tools
+    assert ruling["tool_choice"] == "none"
+    response_format = ruling["response_format"]
     assert response_format["type"] == "json_schema"
     assert response_format["json_schema"]["name"] == "Ruling"
     assert response_format["json_schema"]["strict"] is True
     assert response_format["json_schema"]["schema"]["required"] == list(
         Ruling.model_fields
     )
-    assert "strict" not in model.bound
+    assert "strict" not in ruling
+
+
+def test_both_bindings_are_made_once_rather_than_per_statement() -> None:
+    """The checker holds nothing that changes, so two checks bind nothing further."""
+    model = _Model({CLAIM: [_done(), _ai(_ruling_text())]})
+    checker = AgentChecker(model, _Tools().tools, _settings())
+
+    asyncio.run(checker.check(_statement()))
+    asyncio.run(checker.check(_statement(identifier="s2")))
+
+    assert len(model.bindings) == 2
 
 
 def test_a_check_that_searches_once_returns_the_ruling_and_what_it_cost() -> None:
-    """The happy path: one search, one ruling, and the usage of both turns."""
+    """The happy path: one search, one ruling, and the usage of all three turns."""
     model = _Model(
         {
             CLAIM: [
                 _ai(tool_calls=[_search()], prompt_tokens=110, completion_tokens=12),
+                _done(prompt_tokens=200, completion_tokens=5),
                 _ai(_ruling_text(), prompt_tokens=340, completion_tokens=88),
             ]
         }
@@ -419,18 +484,24 @@ def test_a_check_that_searches_once_returns_the_ruling_and_what_it_cost() -> Non
     assert outcome.ruling.verdict == "supported"
     assert outcome.ruling.references[0].source == "https://example.test/boiling"
     assert outcome.searches == 1
-    assert outcome.prompt_tokens == 450
-    assert outcome.completion_tokens == 100
+    assert outcome.prompt_tokens == 650
+    assert outcome.completion_tokens == 105
     assert tools.named(SEARCH_TOOL_NAME) == [{"query": "boiling point of water"}]
 
 
-def test_token_counts_add_up_across_the_turns_rather_than_report_the_last() -> None:
-    """The run's cost is every turn's cost, so a three-turn check reports all three."""
+def test_token_counts_add_up_across_every_turn_including_the_ruling_turn() -> None:
+    """The run's cost is every turn's cost, and the ruling turn is a turn.
+
+    The ruling is a request of its own, so its tokens are spend like any other. A
+    count that dropped them would under-report every check by a whole turn, and by
+    the turn that carries the longest conversation of the check.
+    """
     model = _Model(
         {
             CLAIM: [
                 _ai(tool_calls=[_search()], prompt_tokens=100, completion_tokens=10),
                 _ai(tool_calls=[_read()], prompt_tokens=200, completion_tokens=20),
+                _done(prompt_tokens=300, completion_tokens=30),
                 _ai(_ruling_text(), prompt_tokens=400, completion_tokens=40),
             ]
         }
@@ -439,8 +510,8 @@ def test_token_counts_add_up_across_the_turns_rather_than_report_the_last() -> N
 
     outcome = asyncio.run(checker.check(_statement()))
 
-    assert outcome.prompt_tokens == 700
-    assert outcome.completion_tokens == 70
+    assert outcome.prompt_tokens == 1000
+    assert outcome.completion_tokens == 100
 
 
 def test_a_turn_that_reports_no_usage_costs_nothing_rather_than_failing() -> None:
@@ -461,6 +532,7 @@ def test_only_the_search_tool_counts_towards_the_search_count() -> None:
             CLAIM: [
                 _ai(tool_calls=[_search()]),
                 _ai(tool_calls=[_read(), _read(call_id="c3")]),
+                _done(),
                 _ai(_ruling_text()),
             ]
         }
@@ -474,13 +546,14 @@ def test_only_the_search_tool_counts_towards_the_search_count() -> None:
     assert len(tools.named(PAGE_TOOL_NAME)) == 2
 
 
-def test_each_turn_carries_a_budget_reminder_naming_what_is_left() -> None:
+def test_each_searching_turn_carries_a_budget_reminder_naming_what_is_left() -> None:
     """The reminder rides on the turn, and the count it names moves with the spend."""
     model = _Model(
         {
             CLAIM: [
                 _ai(tool_calls=[_search()]),
                 _ai(tool_calls=[_read()]),
+                _done(),
                 _ai(_ruling_text()),
             ]
         }
@@ -489,31 +562,51 @@ def test_each_turn_carries_a_budget_reminder_naming_what_is_left() -> None:
 
     asyncio.run(checker.check(_statement()))
 
-    first, second, third = model.turns_about(CLAIM)
+    first, second, third, _ = model.turns_about(CLAIM)
     assert "0 of 5" in _reminder(first)
     assert "1 of 5" in _reminder(second)
     assert "2 of 5" in _reminder(third)
 
 
-def test_a_stale_reminder_is_not_kept_in_the_conversation() -> None:
-    """One count per turn: a history of stale counts is a history that misleads."""
-    model = _Model({CLAIM: [_ai(tool_calls=[_search()]), _ai(_ruling_text())]})
+def test_the_ruling_turn_asks_for_the_ruling_rather_than_reporting_the_budget() -> None:
+    """The last turn is a different request, and it carries a different message."""
+    model = _Model({CLAIM: [_ai(tool_calls=[_search()]), _done(), _ai(_ruling_text())]})
     checker = AgentChecker(model, _Tools().tools, _settings(tool_call_budget=5))
 
     asyncio.run(checker.check(_statement()))
 
-    written = [str(message.content) for message in model.turns_about(CLAIM)[1]]
+    ruling_turn = model.turns_about(CLAIM)[-1]
+    assert "Rule now" in _reminder(ruling_turn)
+    assert "tool calls used" not in _reminder(ruling_turn)
+    answered = [one for one in ruling_turn if isinstance(one, ToolMessage)]
+    assert [str(one.content) for one in answered] == ["one result"]
+
+
+def test_a_stale_reminder_is_not_kept_in_the_conversation() -> None:
+    """One message per turn: a history of stale counts is a history that misleads."""
+    model = _Model({CLAIM: [_ai(tool_calls=[_search()]), _done(), _ai(_ruling_text())]})
+    checker = AgentChecker(model, _Tools().tools, _settings(tool_call_budget=5))
+
+    asyncio.run(checker.check(_statement()))
+
+    turns = model.turns_about(CLAIM)
+    written = [str(message.content) for message in turns[1]]
     assert len([one for one in written if "of 5 tool calls used" in one]) == 1
+    kept = [str(message.content) for message in turns[-1][:-1]]
+    assert [one for one in kept if "of 5 tool calls used" in one] == []
 
 
 def test_the_budget_stops_the_tool_calls_and_the_agent_still_rules() -> None:
-    """Reaching the budget is not a failure: the agent rules on what it holds."""
+    """Reaching the budget is not a failure: the agent is asked to rule on what it has.
+
+    A model that would keep searching is not cut off with an error. The searching
+    turns stop, and the ruling turn follows them as it follows any other ending.
+    """
     model = _Model(
         {
             CLAIM: [
                 _ai(tool_calls=[_search()]),
                 _ai(tool_calls=[_search(call_id="c2")]),
-                _ai(tool_calls=[_search(call_id="c3")]),
                 _ai(_ruling_text(verdict="unverifiable")),
             ]
         }
@@ -525,7 +618,8 @@ def test_the_budget_stops_the_tool_calls_and_the_agent_still_rules() -> None:
 
     assert outcome.ruling.verdict == "unverifiable"
     assert len(tools.named(SEARCH_TOOL_NAME)) == 2
-    assert "none left" in _reminder(model.turns_about(CLAIM)[-1])
+    assert len(model.turns_about(CLAIM)) == 3
+    assert "Rule now" in _reminder(model.turns_about(CLAIM)[-1])
 
 
 def test_a_tool_call_beyond_the_budget_is_refused_rather_than_made() -> None:
@@ -569,6 +663,7 @@ def test_a_call_to_a_tool_that_does_not_exist_is_answered_rather_than_raised() -
         {
             CLAIM: [
                 _ai(tool_calls=[tool_call(name="browse", args={}, id="c1")]),
+                _done(),
                 _ai(_ruling_text()),
             ]
         }
@@ -580,9 +675,7 @@ def test_a_call_to_a_tool_that_does_not_exist_is_answered_rather_than_raised() -
 
     assert outcome.ruling.verdict == "supported"
     assert tools.calls == []
-    answered = model.turns_about(CLAIM)[-1][-2]
-    assert isinstance(answered, ToolMessage)
-    assert SEARCH_TOOL_NAME in str(answered.content)
+    assert SEARCH_TOOL_NAME in _answer(model.turns_about(CLAIM)[-1])
 
 
 @pytest.mark.parametrize("arguments", [{}, {"queries": ["boiling"]}])
@@ -604,6 +697,7 @@ def test_a_call_whose_arguments_do_not_fit_is_answered_rather_than_raised(
                         tool_call(name=SEARCH_TOOL_NAME, args=arguments, id="c1")
                     ]
                 ),
+                _done(),
                 _ai(_ruling_text()),
             ]
         }
@@ -613,14 +707,16 @@ def test_a_call_whose_arguments_do_not_fit_is_answered_rather_than_raised(
     outcome = asyncio.run(checker.check(_statement()))
 
     assert outcome.ruling.verdict == "supported"
-    answered = model.turns_about(CLAIM)[-1][-2]
-    assert isinstance(answered, ToolMessage)
-    assert "query" in str(answered.content)
+    assert "query" in _answer(model.turns_about(CLAIM)[-1])
 
 
 def test_a_malformed_ruling_is_retried_once_with_the_validation_error() -> None:
-    """The model is shown what it got wrong, so its second try can be different."""
-    model = _Model({CLAIM: [_ai("verdict: probably true"), _ai(_ruling_text())]})
+    """The model is shown what it got wrong, so its second try can be different.
+
+    The retry is a ruling turn of its own, and the correction joins the conversation
+    it is made over: the model reads its own rejected answer above the reason.
+    """
+    model = _Model({CLAIM: [_done(), _ai(MALFORMED_ANSWER), _ai(_ruling_text())]})
     checker = AgentChecker(model, _Tools().tools, _settings())
 
     outcome = asyncio.run(checker.check(_statement()))
@@ -628,7 +724,7 @@ def test_a_malformed_ruling_is_retried_once_with_the_validation_error() -> None:
     assert outcome.ruling.verdict == "supported"
     correction = str(model.turns_about(CLAIM)[-1][-2].content)
     assert "not a valid ruling" in correction
-    assert "verdict: probably true" in correction
+    assert MALFORMED_ANSWER in correction
 
 
 def test_a_second_malformed_ruling_fails_the_statement_by_its_own_kind() -> None:
@@ -711,9 +807,9 @@ def test_a_tool_failure_travels_out_of_the_check_unchanged(
 def test_every_tool_call_is_answered_before_the_next_turn_is_sent() -> None:
     """A model that keeps calling tools past its budget still leaves a sendable turn.
 
-    This is the pathological path: the budget runs out, the last turn asks for another
-    tool anyway and so carries no ruling, and the retry has to send that conversation
-    back. It can only do that if the refused call was answered in writing.
+    This is the pathological path: the budget runs out, the ruling turn asks for
+    another tool anyway and so carries no ruling, and the retry has to send that
+    conversation back. It can only do that if every call was answered in writing.
     """
     model = _Model(
         {
@@ -734,15 +830,38 @@ def test_every_tool_call_is_answered_before_the_next_turn_is_sent() -> None:
     assert [_unanswered(turn) for turn in model.turns_about(CLAIM)] == [[], [], []]
 
 
-def test_the_request_the_real_client_sends_carries_strict_one_argument_tools() -> None:
-    """What the wire carries is the only thing the gateway ever sees.
+def test_a_searching_request_carries_the_tools_and_no_ruling_schema() -> None:
+    """The regression guard for the defect that made the agent rule from memory.
 
-    Two facts about the pinned client meet here. A `response_format` in the payload
-    routes the request through the OpenAI SDK's parsing path, which refuses to send
-    any tool that is not strict. And strictness rewrites `required` to list every
-    property, which would oblige the model to supply the arguments the run cache
-    cannot key on. Both hold together only because `instrument` already narrowed each
-    tool to one argument, so the rewrite has nothing left to add.
+    A live run proved the two mutually exclusive on one request: the same messages and
+    the same tools, sent with a strict `json_schema` `response_format`, came back with
+    no tool call and a finished ruling, and sent without one came back asking to
+    search. So a searching request must reach the gateway carrying tools and no
+    schema, and the answer to it must drive a real tool call.
+    """
+    gateway = _Gateway(
+        [_wire_tool_call(SEARCH_TOOL_NAME, query="boiling point of water")],
+        "I have the evidence I need.",
+        _ruling_text(),
+    )
+    checker = AgentChecker(gateway.model(), _real_tools(), _settings())
+
+    outcome = asyncio.run(checker.check(_statement()))
+
+    assert outcome.searches == 1
+    searching, second, ruling = gateway.sent
+    assert "response_format" not in searching
+    assert "response_format" not in second
+    assert ruling["response_format"]["json_schema"]["name"] == "Ruling"
+    offered = [one["function"]["name"] for one in searching["tools"]]
+    assert offered == [SEARCH_TOOL_NAME, PAGE_TOOL_NAME]
+
+
+def test_a_searching_request_offers_each_tool_the_one_argument_it_keys_on() -> None:
+    """The run cache keys a search on its query, so a further argument is unkeyed.
+
+    `instrument` narrows each tool before the binding sees it, and what the wire
+    carries is the only thing the gateway ever reads.
     """
     gateway = _Gateway(_ruling_text())
     checker = AgentChecker(gateway.model(), _real_tools(), _settings())
@@ -751,12 +870,37 @@ def test_the_request_the_real_client_sends_carries_strict_one_argument_tools() -
 
     search = gateway.tool_named(SEARCH_TOOL_NAME)
     page = gateway.tool_named(PAGE_TOOL_NAME)
-    assert search["strict"] is True
-    assert page["strict"] is True
     assert search["parameters"]["required"] == ["query"]
     assert page["parameters"]["required"] == ["url"]
     assert list(search["parameters"]["properties"]) == ["query"]
-    assert gateway.sent[0]["response_format"]["json_schema"]["name"] == "Ruling"
+
+
+def test_the_ruling_request_carries_strict_tools_beside_the_schema() -> None:
+    """What the wire carries is the only thing the gateway ever sees.
+
+    Two facts about the pinned client meet on this request. A `response_format` in the
+    payload routes it through the OpenAI SDK's parsing path, which refuses to send any
+    tool that is not strict. And strictness rewrites `required` to list every
+    property, which would oblige the model to supply the arguments the run cache
+    cannot key on. Both hold together only because `instrument` already narrowed each
+    tool to one argument, so the rewrite has nothing left to add.
+
+    The tools ride along because the conversation names their calls, and
+    `tool_choice` is what forbids another.
+    """
+    gateway = _Gateway(_ruling_text())
+    checker = AgentChecker(gateway.model(), _real_tools(), _settings())
+
+    asyncio.run(checker.check(_statement()))
+
+    search = gateway.tool_named(SEARCH_TOOL_NAME, request=-1)
+    page = gateway.tool_named(PAGE_TOOL_NAME, request=-1)
+    assert search["strict"] is True
+    assert page["strict"] is True
+    assert search["parameters"]["required"] == ["query"]
+    assert list(search["parameters"]["properties"]) == ["query"]
+    assert gateway.sent[-1]["tool_choice"] == "none"
+    assert gateway.sent[-1]["response_format"]["json_schema"]["name"] == "Ruling"
 
 
 def test_a_malformed_answer_from_the_real_client_reaches_the_retry() -> None:
@@ -766,14 +910,14 @@ def test_a_malformed_answer_from_the_real_client_reaches_the_retry() -> None:
     leaves `ainvoke` before this package sees the answer. Bound a schema document, the
     answer arrives as a message and the correction turn happens.
     """
-    gateway = _Gateway(MALFORMED_ANSWER, _ruling_text())
+    gateway = _Gateway("I have the evidence I need.", MALFORMED_ANSWER, _ruling_text())
     checker = AgentChecker(gateway.model(), _real_tools(), _settings())
 
     outcome = asyncio.run(checker.check(_statement()))
 
     assert outcome.ruling.verdict == "supported"
-    assert len(gateway.sent) == 2
-    correction = str(gateway.sent[1]["messages"][-2]["content"])
+    assert len(gateway.sent) == 3
+    correction = str(gateway.sent[2]["messages"][-2]["content"])
     assert "not a valid ruling" in correction
     assert MALFORMED_ANSWER in correction
 
@@ -800,6 +944,7 @@ def test_a_whole_check_runs_over_the_real_client_from_tool_call_to_ruling() -> N
     """
     gateway = _Gateway(
         [_wire_tool_call(SEARCH_TOOL_NAME, query="boiling point of water")],
+        "I have the evidence I need.",
         _ruling_text(),
         prompt=100,
         completion=10,
@@ -810,23 +955,28 @@ def test_a_whole_check_runs_over_the_real_client_from_tool_call_to_ruling() -> N
 
     assert outcome.ruling.verdict == "supported"
     assert outcome.searches == 1
-    assert outcome.prompt_tokens == 200
-    assert outcome.completion_tokens == 20
+    assert outcome.prompt_tokens == 300
+    assert outcome.completion_tokens == 30
     answered = gateway.sent[1]["messages"][-2]
     assert answered["role"] == "tool"
     assert answered["content"] == "one result"
 
 
 def test_a_well_formed_answer_from_the_real_client_reports_what_it_billed() -> None:
-    """The counts come off the gateway's own usage object, through the real client."""
+    """The counts come off the gateway's own usage object, through the real client.
+
+    Two requests are billed even where nothing is searched: the turn that decides no
+    search is needed, and the ruling turn that follows it.
+    """
     gateway = _Gateway(_ruling_text(), prompt=317, completion=64)
     checker = AgentChecker(gateway.model(), _real_tools(), _settings())
 
     outcome = asyncio.run(checker.check(_statement()))
 
     assert outcome.ruling.verdict == "supported"
-    assert outcome.prompt_tokens == 317
-    assert outcome.completion_tokens == 64
+    assert len(gateway.sent) == 2
+    assert outcome.prompt_tokens == 634
+    assert outcome.completion_tokens == 128
     assert outcome.searches == 0
 
 
@@ -834,11 +984,12 @@ def test_a_statements_search_count_is_its_own_while_another_runs_beside_it() -> 
     """One `AgentChecker` serves many statements, and neither sees the other's calls."""
     model = _Model(
         {
-            CLAIM: [_ai(tool_calls=[_search()]), _ai(_ruling_text())],
+            CLAIM: [_ai(tool_calls=[_search()]), _done(), _ai(_ruling_text())],
             OTHER_CLAIM: [
                 _ai(tool_calls=[_search(query="mercury", call_id="m1")]),
                 _ai(tool_calls=[_search(query="freezing", call_id="m2")]),
                 _ai(tool_calls=[_read(call_id="m3")]),
+                _done(),
                 _ai(_ruling_text(verdict="refuted")),
             ],
         }
@@ -861,8 +1012,8 @@ def test_a_statements_search_count_is_its_own_while_another_runs_beside_it() -> 
 
 
 def test_a_check_that_needs_no_tool_rules_without_spending_one() -> None:
-    """A model that rules on the first turn is not made to search for form's sake."""
-    model = _Model({CLAIM: [_ai(_ruling_text(verdict="mixed"))]})
+    """A model that asks for no tool is not made to search for form's sake."""
+    model = _Model({CLAIM: [_done(), _ai(_ruling_text(verdict="mixed"))]})
     tools = _Tools()
     checker = AgentChecker(model, tools.tools, _settings())
 
@@ -871,3 +1022,23 @@ def test_a_check_that_needs_no_tool_rules_without_spending_one() -> None:
     assert outcome.ruling.verdict == "mixed"
     assert outcome.searches == 0
     assert tools.calls == []
+
+
+def test_a_tool_call_on_the_ruling_turn_is_refused_rather_than_made() -> None:
+    """The searching is over, and its budget is not the ruling turn's to spend.
+
+    The binding leaves the model no way to ask for a tool on this turn, so a call
+    here is a gateway forwarding one anyway. Answering it in writing is what keeps
+    the conversation sendable: the retry could not go back with an assistant message
+    whose call no message answers.
+    """
+    model = _Model({CLAIM: [_done(), _ai(tool_calls=[_search()]), _ai(_ruling_text())]})
+    tools = _Tools()
+    checker = AgentChecker(model, tools.tools, _settings())
+
+    outcome = asyncio.run(checker.check(_statement()))
+
+    assert outcome.ruling.verdict == "supported"
+    assert tools.calls == []
+    assert "searching is over" in _answer(model.turns_about(CLAIM)[-1])
+    assert [_unanswered(turn) for turn in model.turns_about(CLAIM)] == [[], [], []]

@@ -68,10 +68,11 @@ Every limit below is a default, and `.env.example` names the variable that moves
 
 A run checks eight statements at once. A check that is still running after 240 seconds is cancelled,
 and that statement comes back with a `timeout` error quoting the limit. One check may make ten tool
-calls before it must rule on what it has, and reaching that ceiling is not a failure: the agent is
-told the budget is gone and rules on the evidence it holds. At most 100,000 characters of any one
-fetched page reach the model, and a page cut there says so where it was cut. A call that fails for a
-reason another try might fix is retried three times, with a jittered doubling wait between attempts.
+calls before it must rule on what it has, and reaching that ceiling is not a failure: the searching
+stops there, and the agent is asked to rule on the evidence it holds. At most 100,000 characters of
+any one fetched page reach the model, and a page cut there says so where it was cut. A call that
+fails for a reason another try might fix is retried three times, with a jittered doubling wait
+between attempts.
 
 ### What a run costs
 

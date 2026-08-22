@@ -5,12 +5,18 @@ of the two things this package needs from a loop — a budget reminder on every 
 a stop at the budget that still ends in a ruling — is something that agent does, and
 the arithmetic that decides both is arithmetic a test has to be able to drive without a
 live model.
+
+A check is two kinds of request, and the loop keeps them apart. A `json_schema`
+`response_format` and a tool call are mutually exclusive on one request: the answer is
+constrained to the ruling schema, and a tool call is not a member of that schema. So
+the searching turns bind the tools and no schema, and the ruling turn binds the schema
+over the conversation those turns produced.
 """
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -19,6 +25,7 @@ from langchain_core.messages import (
     ToolCall,
     ToolMessage,
 )
+from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from pydantic import ValidationError
 
@@ -28,6 +35,7 @@ from factchecker.errors import CheckFailed
 from factchecker.models import IdentifiedStatement, Ruling
 from factchecker.prompts import (
     build_budget_reminder,
+    build_ruling_request,
     build_statement_prompt,
     build_system_prompt,
 )
@@ -38,6 +46,10 @@ MALFORMED_RULING = "malformed_ruling"
 _BUDGET_SPENT = (
     "This call was not made: the tool-call budget for this claim is spent. "
     "Rule now on the evidence you already hold."
+)
+
+_SEARCHING_IS_OVER = (
+    "This call was not made: the searching is over. Answer with the ruling alone."
 )
 
 
@@ -86,8 +98,8 @@ class _Run:
     """One statement's conversation, and what that statement has spent so far.
 
     Every field here is one statement's own. That is what lets a single
-    `AgentChecker` serve many statements at once: the checker holds the model, the
-    tools and the settings, and holds nothing that changes.
+    `AgentChecker` serve many statements at once: the checker holds its two bound
+    models, the tools and the settings, and holds nothing that changes.
     """
 
     conversation: list[BaseMessage]
@@ -106,7 +118,19 @@ class AgentChecker:
     def __init__(
         self, model: BaseChatModel, tools: Sequence[BaseTool], settings: Settings
     ) -> None:
-        """Bind the model to the tools and to the ruling schema, once for the run.
+        """Bind the two models one check spends, once for the run.
+
+        A searching turn and the ruling turn are different requests. Bound to the
+        ruling schema, a request can answer with nothing but a ruling, so a model
+        bound that way on every turn is a model that never searches. The searching
+        binding therefore carries the tools and no schema, and the ruling binding
+        carries the schema.
+
+        The ruling binding carries the tools too, and forbids a call by naming
+        `tool_choice` as `none`. The conversation it is sent holds the searching
+        turns' calls and their answers, and a gateway reads those against the tools
+        the request declares. The schema alone already leaves no room for a call to
+        be asked for; `none` says so at the level a gateway enforces.
 
         The ruling is asked for as structured output, and is validated again when it
         arrives. That is not belt and braces: the free model this package offers as an
@@ -115,12 +139,12 @@ class AgentChecker:
         money.
 
         Nothing is said about strictness, which leaves `langchain-openai` 1.6.0 to
-        convert every tool strictly, as a `response_format` in the payload obliges it
-        to: `openai` 3.3.1 refuses to send a request carrying a tool that is not
-        strict, and refuses it before any request goes out. Strictness rewrites a
-        tool's `required` to list every property it offers, which is a rewrite with
-        nothing to do here, because `instrument` already narrowed each tool to the one
-        argument it requires.
+        convert the ruling binding's tools strictly, as a `response_format` in the
+        payload obliges it to: `openai` 3.3.1 refuses to send a request carrying a
+        tool that is not strict, and refuses it before any request goes out.
+        Strictness rewrites a tool's `required` to list every property it offers,
+        which is a rewrite with nothing to do here, because `instrument` already
+        narrowed each tool to the one argument it requires.
 
         Args:
             model: The chat model, with nothing bound to it yet.
@@ -129,7 +153,10 @@ class AgentChecker:
                 per-statement state, so one set serves every statement of a run.
             settings: The run's settings. This class reads the tool-call budget.
         """
-        self._model = model.bind_tools(tools, response_format=_RULING_RESPONSE_FORMAT)
+        self._searching = model.bind_tools(tools)
+        self._ruling = model.bind_tools(
+            tools, tool_choice="none", response_format=_RULING_RESPONSE_FORMAT
+        )
         self._tools = {tool.name: tool for tool in tools}
         self._settings = settings
 
@@ -155,8 +182,8 @@ class AgentChecker:
                 HumanMessage(build_statement_prompt(statement)),
             ]
         )
-        answer = await self._converse(run)
-        ruling = await self._ruled(run, answer)
+        await self._search(run)
+        ruling = await self._ruled(run)
         return CheckOutcome(
             ruling=ruling,
             prompt_tokens=run.prompt_tokens,
@@ -164,37 +191,39 @@ class AgentChecker:
             searches=_searches(run.conversation),
         )
 
-    async def _converse(self, run: _Run) -> AIMessage:
-        """Take turns with the model until it answers without asking for a tool.
+    async def _search(self, run: _Run) -> None:
+        """Take searching turns until the model stops asking, or the budget is gone.
 
-        The budget is read between turns, so the turn that spends the last call is
-        followed by one more: its reminder says the budget is gone, and the model
-        rules on what it holds. Reaching the budget is not a failure.
-
-        That last turn is passed to `_spend` as well. It has nothing left to spend, so
-        every call it asks for is refused in writing. A refusal left unwritten would
-        leave an assistant message whose tool calls no message answers, and the retry
-        in `_ruled` could not send that conversation back.
+        Both endings lead to the same place. The ruling is a request of its own, and
+        it is made over whatever these turns gathered, so reaching the budget is not a
+        failure and needs no turn of its own to recover from.
         """
         while run.used < self._settings.tool_call_budget:
-            answer = await self._turn(run)
+            answer = await self._turn(
+                run,
+                self._searching,
+                build_budget_reminder(run.used, self._settings.tool_call_budget),
+            )
             if not answer.tool_calls:
-                return answer
+                return
             await self._spend(run, answer)
-        last = await self._turn(run)
-        await self._spend(run, last)
-        return last
 
-    async def _turn(self, run: _Run) -> AIMessage:
-        """Ask the model once, with the budget reminder appended to what it sees.
+    async def _turn(
+        self,
+        run: _Run,
+        model: Runnable[LanguageModelInput, AIMessage],
+        riding: str,
+    ) -> AIMessage:
+        """Ask one model once, with a message appended to what it sees.
 
-        The reminder rides on the turn rather than joining the conversation, so the
-        history holds one claim and its evidence instead of a stack of stale counts.
+        The message rides on the turn rather than joining the conversation, so the
+        history holds one claim and its evidence instead of a stack of stale counts
+        and repeated instructions.
+
+        Every turn is a billed request, the ruling turn included, so every turn's
+        usage is added here.
         """
-        reminder = HumanMessage(
-            build_budget_reminder(run.used, self._settings.tool_call_budget)
-        )
-        answer = await self._model.ainvoke([*run.conversation, reminder])
+        answer = await model.ainvoke([*run.conversation, HumanMessage(riding)])
         prompt_tokens, completion_tokens = _tokens(answer)
         run.prompt_tokens += prompt_tokens
         run.completion_tokens += completion_tokens
@@ -254,18 +283,19 @@ class AgentChecker:
                 tool_call_id=call["id"],
             )
 
-    async def _ruled(self, run: _Run, answer: AIMessage) -> Ruling:
-        """Read the ruling out of the model's answer, allowing one try at fixing it.
+    async def _ruled(self, run: _Run) -> Ruling:
+        """Ask for the ruling, allowing the model one try at fixing a bad one.
 
         A ruling that half validates is thrown away whole. A ruling missing its
         references is not a weaker ruling; it is a different claim.
         """
+        answer = await self._rule(run)
         try:
             return Ruling.model_validate_json(answer.text)
         except ValidationError as rejected:
             run.conversation.append(HumanMessage(_correction(rejected)))
-            retried = await self._turn(run)
 
+        retried = await self._rule(run)
         try:
             return Ruling.model_validate_json(retried.text)
         except ValidationError:
@@ -274,6 +304,22 @@ class AgentChecker:
                 "the model's ruling did not validate, and nor did the one it wrote "
                 "after being shown why",
             ) from None
+
+    async def _rule(self, run: _Run) -> AIMessage:
+        """Ask for the ruling over the conversation the searching turns produced.
+
+        A tool call has no place on this turn, and the binding leaves the model no
+        way to ask for one. A gateway that forwarded one anyway would leave an
+        assistant message whose call no message answers, and the retry could not send
+        that conversation back. So a call that arrives is refused in writing rather
+        than made: the searching is over, and its budget is not this turn's to spend.
+        """
+        answer = await self._turn(run, self._ruling, build_ruling_request())
+        for call in answer.tool_calls:
+            run.conversation.append(
+                ToolMessage(content=_SEARCHING_IS_OVER, tool_call_id=call["id"])
+            )
+        return answer
 
 
 def _correction(rejected: ValidationError) -> str:

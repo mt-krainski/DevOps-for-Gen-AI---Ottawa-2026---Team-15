@@ -2,6 +2,11 @@
 
 The wording lives here rather than inside the agent so that Task 4 can tune it against
 the evaluation suite without touching the loop that spends it.
+
+A check is two kinds of request, and the wording follows the split. The searching turns
+carry the system prompt, the claim and a budget reminder, and they may call a tool. The
+ruling turn carries the request below and answers under the ruling schema, which is a
+constraint no tool call is a member of.
 """
 
 from factchecker.models import IdentifiedStatement
@@ -37,7 +42,7 @@ You have {budget} tool calls for this claim, and no more. Searching and reading
 spend from the same {budget}. Plan across both. A search you never read settles
 nothing, and a page you read without searching first is a page you picked blind.
 A message before each turn tells you how many calls are left. When they are
-gone, rule on the evidence you hold.
+gone, you are asked to rule on the evidence you hold.
 
 ## Your verdict
 
@@ -72,9 +77,10 @@ evidence names the reference it came from.
 
 ## Your answer
 
-When you are ready, answer with the ruling alone, as one JSON object holding
-`verdict`, `confidence`, `justification` and `references`. Do not call a tool in
-that turn, and write nothing outside the object.
+Search and read until the evidence settles the claim, or until your calls are
+gone. Then stop calling tools and say what you found. You are asked for the
+ruling in a turn of its own, and that turn is the one you write it in: one JSON
+object holding `verdict`, `confidence`, `justification` and `references`.
 """
 
 
@@ -105,28 +111,47 @@ wrong subject settles nothing about this one.
 
 
 def build_budget_reminder(used: int, budget: int) -> str:
-    """Build the note appended to each turn, saying what the budget has left.
+    """Build the note appended to each searching turn, saying what the budget has left.
 
     An agent that knows what it has left paces itself; one that does not is simply
     cut off partway through a plan it cannot finish.
 
+    A searching turn happens only while the budget still has a call in it, so this
+    always has something left to report. The turn that ends a spent budget is the
+    ruling turn, and `build_ruling_request` is what it carries.
+
     Args:
-        used: How many tool calls this check has spent.
+        used: How many tool calls this check has spent. Always fewer than the budget.
         budget: How many it may spend in total.
 
     Returns:
-        One line for a turn with calls left, and the instruction to rule for a turn
-        without.
+        One line naming what is spent and what is left.
     """
-    remaining = budget - used
-    if remaining <= 0:
-        return (
-            f"Budget: {used} of {budget} tool calls used, none left. "
-            "Rule now on the evidence you hold. If it settles nothing, "
-            "the verdict is `unverifiable`."
-        )
     return (
-        f"Budget: {used} of {budget} tool calls used, {remaining} left. "
+        f"Budget: {used} of {budget} tool calls used, {budget - used} left. "
         "Spend what is left across searching and reading, and keep back enough "
         "to read what you find."
     )
+
+
+def build_ruling_request() -> str:
+    """Build the turn that asks for the ruling, once the searching is over.
+
+    Ruling is a request of its own because the answer to it is constrained to the
+    ruling schema, and a request constrained that way can carry no tool call. So this
+    turn arrives after the searching turns rather than beside them, and it repeats
+    the shape of the answer: the model has read whole pages since the system prompt
+    described it.
+
+    Returns:
+        The turn that asks for the ruling.
+    """
+    return """\
+The searching is over. Rule now on the evidence this conversation holds, and on
+nothing else.
+
+Answer with the ruling alone, as one JSON object holding `verdict`,
+`confidence`, `justification` and `references`. Cite only pages you read here,
+quote each excerpt from what the page returned, and write nothing outside the
+object. If the evidence settles nothing, the verdict is `unverifiable`.
+"""

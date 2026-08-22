@@ -11,6 +11,7 @@ import pytest
 from factchecker.models import IdentifiedStatement
 from factchecker.prompts import (
     build_budget_reminder,
+    build_ruling_request,
     build_statement_prompt,
     build_system_prompt,
 )
@@ -109,6 +110,18 @@ def test_the_system_prompt_asks_the_search_tool_for_a_query_and_nothing_else() -
     assert "query and nothing else" in prompt
 
 
+def test_the_system_prompt_says_the_ruling_is_asked_for_in_a_turn_of_its_own() -> None:
+    """The mechanism the loop uses is the mechanism the prompt describes.
+
+    The ruling is a request of its own, made after the searching turns. A prompt that
+    asked for a ruling in the same breath as a search would describe a turn the agent
+    never takes.
+    """
+    prompt = build_system_prompt(BUDGET).lower()
+
+    assert "turn of its own" in prompt
+
+
 def test_the_statement_prompt_carries_the_claim_and_its_context() -> None:
     """Both reach the model, because the claim alone is often unsearchable."""
     prompt = build_statement_prompt(_statement())
@@ -141,10 +154,37 @@ def test_the_budget_reminder_reports_what_is_left_in_the_middle() -> None:
     assert "6 left" in reminder
 
 
-def test_the_budget_reminder_says_to_rule_now_when_the_budget_is_spent() -> None:
-    """The stop is not a failure: the agent rules on what it holds."""
-    reminder = build_budget_reminder(10, 10)
+def test_the_budget_reminder_reports_the_last_call_as_one_still_to_spend() -> None:
+    """A searching turn happens only while a call is left, so one is always left."""
+    reminder = build_budget_reminder(9, 10)
 
-    assert "10 of 10" in reminder
-    assert "none left" in reminder
-    assert "rule now" in reminder.lower()
+    assert "9 of 10" in reminder
+    assert "1 left" in reminder
+
+
+def test_the_ruling_request_asks_for_the_ruling_alone_as_one_object() -> None:
+    """The ruling turn carries the shape of the answer, not the state of the budget."""
+    request = build_ruling_request()
+
+    assert "rule now" in request.lower()
+    for field in ("`verdict`", "`confidence`", "`justification`", "`references`"):
+        assert field in request
+
+
+def test_the_ruling_request_asks_for_the_evidence_the_conversation_holds() -> None:
+    """The ruling turn is where invented sources get in, so it says where to cite from.
+
+    This is the turn the agent rules on, and the model that reaches it holds both what
+    it read and what it already believed. The request names which of the two counts.
+    """
+    request = build_ruling_request().lower()
+
+    assert "this conversation holds" in request
+    assert "cite only pages you read here" in request
+
+
+def test_the_ruling_request_says_an_unsettled_claim_is_unverifiable() -> None:
+    """The stop is not a failure: a ruling the model guessed at is worse."""
+    request = build_ruling_request()
+
+    assert "`unverifiable`" in request
