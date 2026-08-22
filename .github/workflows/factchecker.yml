@@ -19,9 +19,11 @@ defaults:
   run:
     working-directory: packages/factchecker
 
-# Nothing here supplies a credential and nothing calls a model: this package
-# ships no checking agent, so there is no upstream service to authenticate
-# against. That is why no step below carries an `env` or a `secrets` block.
+# Nothing here supplies a credential. The package ships a checking agent that
+# calls OpenRouter and Bright Data, and no test does: every test drives a fake
+# model and a fake tool, and none reaches a network. That is why no step below
+# carries an `env` or a `secrets` block, and adding one is the error this comment
+# exists to prevent.
 jobs:
   checks:
     name: Lint and test
