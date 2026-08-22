@@ -9,6 +9,9 @@ dependencies = [
     "pydantic>=2",
 ]
 
+[project.scripts]
+statement-classifier = "statement_classifier.cli:run"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
