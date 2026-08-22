@@ -1,0 +1,11 @@
+[project]
+name = "devops-hackathon-aug-26"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
