@@ -35,8 +35,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     Returns:
         One of the four exit-code constants above, whichever the path through this
-        function reaches. The README's exit-code table is where each code's meaning
-        is published.
+        function reaches. The README's "Exit codes" section is where each code's
+        meaning is published.
     """
     arguments = _parse_arguments(argv)
     configure_logging(arguments.verbose)

@@ -1,4 +1,13 @@
-"""Helpers the test files in this package share."""
+"""Helpers the test files in this package share.
+
+The test files import from this module by name. That resolves because pytest imports
+a conftest before any test module and registers it in `sys.modules` under its
+rootdir-relative dotted name, which `[tool.pytest.ini_options]` pins to this package.
+It is pytest behaviour rather than a documented guarantee: should a pytest release
+end it, collection fails loudly on every file, and the sanctioned fix is to move
+`wire_statement` behind a fixture. Two callers use it at module scope, so that move
+cascades into their constants.
+"""
 
 
 def wire_statement(**overrides: object) -> dict[str, object]:

@@ -163,8 +163,7 @@ verdict at high confidence says the tool is sure the claim cannot be settled thi
 
 ### Errors
 
-`error` carries two keys. `kind` names the failure from a fixed vocabulary, and `message` describes
-it in prose:
+`error` carries two keys. `kind` names the failure and `message` describes it in prose:
 
 - `timeout` — the check was still running at the per-statement limit.
 - `check_failed` — the checker raised.
@@ -187,16 +186,16 @@ A checking agent plugs into one seam, `factchecker/checker.py`:
   statement with its identifier already assigned and returns a `CheckOutcome`.
 - `CheckOutcome` carries the ruling and what producing it consumed: the prompt tokens, the
   completion tokens, and the searches. The run adds those up into `meta.usage`.
-- `OfflineChecker` is the stand-in this build runs in place of a checking agent. It rules every
-  factual statement `unverifiable`, cites nothing, and reports no usage.
+- `OfflineChecker` is the stand-in this build runs in place of a checking agent, with the behaviour
+  described at the top of this document.
 
 The orchestrator holds an implementation to two rules:
 
-- An `AuthenticationFailed` raised from `check` ends the whole run, because a rejected credential
-  fails every statement alike. Any other exception becomes that one statement's `check_failed`
-  error, and the run carries on with the statements that are left.
-- A `check` still running at the per-statement limit is cancelled, and its statement comes back with
-  a `timeout` error.
+- Raising `AuthenticationFailed`, from `factchecker/errors.py`, ends the whole run, because a
+  rejected credential fails every statement alike. Any other exception becomes that one statement's
+  `check_failed` error, and the run carries on with the statements that are left.
+- Your `check` coroutine is what gets cancelled at the per-statement limit under Limits, so it must
+  tolerate cancellation partway.
 
 ## Development
 
