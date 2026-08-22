@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fact-checker — Team 15 pitch</title>
+<link rel="icon" href="../../frontend/public/favicon.svg">
+<style>
+/* Tokens copied from design-system/tokens/ so this deck opens anywhere on its own.
+   Re-copy them if the design system moves; nothing here re-derives a value. */
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+:root{
+--ink-900:#101828;--ink-800:#1d2939;--ink-700:#344054;--ink-600:#475467;
+--ink-500:#667085;--ink-400:#98a2b3;--ink-300:#c8c6c0;--ink-200:#e4e2dd;
+--ink-100:#efedE8;--ink-50:#f7f5f1;--paper:#fbfaf8;--white:#ffffff;
+
+--amber-600:#b26a05;--amber-500:#f5a524;--amber-50:#fef4e3;
+--green-600:#0e7c66;--green-50:#e6f4f0;
+--red-600:#b42318;--red-50:#fdeceb;
+--indigo-600:#3538cd;--indigo-50:#eef0fd;
+
+--text-strong:var(--ink-900);--text-body:var(--ink-800);--text-muted:var(--ink-500);
+--text-faint:var(--ink-400);--text-inverse:var(--white);--text-link:var(--indigo-600);
+
+--surface-page:var(--paper);--surface-card:var(--white);--surface-sunken:var(--ink-50);
+--surface-terminal:var(--ink-900);
+
+--border-subtle:var(--ink-200);--border-strong:var(--ink-300);
+
+--verified-fg:var(--green-600);--verified-bg:var(--green-50);
+--contradicted-fg:var(--red-600);--contradicted-bg:var(--red-50);
+--unsupported-fg:var(--amber-600);--unsupported-bg:var(--amber-50);
+--unchecked-fg:var(--ink-500);--unchecked-bg:var(--ink-50);
+--highlight-bg:var(--amber-50);--highlight-line:var(--amber-500);
+
+--font-sans:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+--font-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+--tracking-tight:-0.02em;--tracking-caps:0.11em;
+
+--radius-xs:3px;--radius-sm:4px;--radius-md:6px;--radius-lg:8px;--radius-pill:999px;
+--shadow-sm:0 1px 2px rgba(16,24,40,.05);
+--ease-out:cubic-bezier(.2,.7,.3,1);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--ink-100);
+  font-family:var(--font-sans);
+  color:var(--text-body);
+  overflow:hidden;
+  display:grid;
+  place-items:center;
+}
+
+/* One fixed 1280x720 stage, scaled to the viewport, so every slide lays out
+   identically on whatever machine the pitch is given from. */
+#stage{
+  width:1280px;height:720px;
+  position:relative;
+  transform-origin:center center;
+  background:var(--surface-page);
+  box-shadow:0 12px 28px rgba(16,24,40,.10),0 2px 6px rgba(16,24,40,.05);
+}
+
+.slide{
+  position:absolute;inset:0;
+  padding:56px 72px;
+  display:none;
+  flex-direction:column;
+}
+.slide.is-current{display:flex}
+
+.eyebrow{
+  font-family:var(--font-mono);font-size:11px;font-weight:500;
+  letter-spacing:var(--tracking-caps);text-transform:uppercase;
+  color:var(--text-muted);
+}
+h1{font-size:44px;line-height:1.15;letter-spacing:var(--tracking-tight);
+   font-weight:600;color:var(--text-strong)}
+h2{font-size:28px;line-height:1.2;letter-spacing:var(--tracking-tight);
+   font-weight:600;color:var(--text-strong)}
+h3{font-size:16px;line-height:1.35;font-weight:600;color:var(--text-strong)}
+p{font-size:15px;line-height:1.6}
+.lede{font-size:20px;line-height:1.45;color:var(--text-body);max-width:60ch}
+.muted{color:var(--text-muted)}
+.mono{font-family:var(--font-mono)}
+small{font-size:13px;line-height:1.5;color:var(--text-muted);display:block}
+
+.slide-head{margin-bottom:28px}
+.slide-head .eyebrow{margin-bottom:10px}
+.slide-body{flex:1;min-height:0}
+
+.card{
+  background:var(--surface-card);
+  border:1px solid var(--border-subtle);
+  border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-sm);
+  padding:20px;
+}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+
+/* The claim-highlight motif: tinted ground plus a 2px bottom border. */
+.claim{
+  background:var(--highlight-bg);
+  border-bottom:2px solid var(--highlight-line);
+  padding:1px 2px;
+}
+.opinion-span{color:var(--text-faint)}
+
+.chip{
+  display:inline-flex;align-items:center;gap:6px;
+  font-family:var(--font-mono);font-size:11px;font-weight:500;
+  letter-spacing:var(--tracking-caps);text-transform:uppercase;
+  padding:3px 10px;border-radius:var(--radius-pill);border:1px solid;
+}
+.chip.supported{color:var(--verified-fg);background:var(--verified-bg);border-color:var(--verified-fg)}
+.chip.refuted{color:var(--contradicted-fg);background:var(--contradicted-bg);border-color:var(--contradicted-fg)}
+.chip.mixed{color:var(--unsupported-fg);background:var(--unsupported-bg);border-color:var(--unsupported-fg)}
+.chip.unverifiable{color:var(--unchecked-fg);background:var(--unchecked-bg);border-color:var(--border-strong)}
+
+/* --- pipeline diagram --- */
+.pipe{display:flex;align-items:stretch;gap:0;margin-top:4px}
+.stage{
+  flex:1;background:var(--surface-card);
+  border:1px solid var(--border-subtle);border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-sm);padding:18px 18px 16px;
+}
+.stage .eyebrow{margin-bottom:8px}
+.stage h3{font-family:var(--font-mono);font-size:15px;font-weight:600;margin-bottom:8px}
+.stage p{font-size:13px;line-height:1.5;color:var(--text-muted)}
+.stage.live{border-color:var(--verified-fg);background:var(--verified-bg)}
+.stage.partial{border-color:var(--unsupported-fg);background:var(--unsupported-bg)}
+.link{
+  flex:0 0 132px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:6px;padding:0 6px;
+}
+.link .arrow{font-family:var(--font-mono);font-size:18px;color:var(--ink-400);line-height:1}
+.link .contract{
+  font-family:var(--font-mono);font-size:11px;color:var(--text-muted);
+  text-align:center;line-height:1.35;
+}
+.rail{
+  margin-top:20px;display:flex;gap:10px;align-items:center;
+  border-top:1px solid var(--border-subtle);padding-top:14px;
+}
+
+  background:var(--surface-terminal);color:var(--ink-100);
+  border-radius:var(--radius-lg);padding:16px 18px;
+  font-family:var(--font-mono);font-size:12.5px;line-height:1.65;
+  white-space:pre;overflow:hidden;
+}
+
+         color:var(--text-strong);min-width:66px}
+
+ul{list-style:none}
+li{font-size:14px;line-height:1.55;padding-left:18px;position:relative;margin-bottom:9px}
+li::before{content:"—";position:absolute;left:0;color:var(--ink-400);
+           font-family:var(--font-mono)}
+li:last-child{margin-bottom:0}
+
+
+/* --- title slide --- */
+.title-slide{justify-content:center}
+.title-slide h1{font-size:60px;font-family:var(--font-mono);font-weight:500;
+                letter-spacing:-0.03em}
+.roster{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.roster span{
+  font-family:var(--font-mono);font-size:12px;color:var(--text-muted);
+  border:1px solid var(--border-subtle);border-radius:var(--radius-pill);
+  padding:4px 12px;background:var(--surface-card);
+}
+
+/* --- heads-up display --- */
+.hud{
+  position:fixed;bottom:14px;right:18px;display:flex;gap:14px;align-items:center;
+  font-family:var(--font-mono);font-size:11px;letter-spacing:var(--tracking-caps);
+  text-transform:uppercase;color:var(--ink-500);
+}
+.hud button{
+  font:inherit;letter-spacing:inherit;text-transform:inherit;
+  background:var(--surface-card);color:var(--ink-600);
+  border:1px solid var(--border-subtle);border-radius:var(--radius-sm);
+  padding:5px 11px;cursor:pointer;transition:background var(--ease-out) 120ms;
+}
+.hud button:hover{background:var(--ink-50)}
+.hud button:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(53,56,205,.18)}
+#counter{min-width:44px;text-align:right}
+
+.slide-foot{
+  position:absolute;left:72px;bottom:26px;right:72px;
+  display:flex;justify-content:space-between;align-items:center;
+  font-family:var(--font-mono);font-size:11px;letter-spacing:var(--tracking-caps);
+  text-transform:uppercase;color:var(--text-faint);
+  border-top:1px solid var(--border-subtle);padding-top:12px;
+}
+
+/* --- slide 4: the sorting visual --- */
+.marks{display:flex;flex-wrap:wrap;gap:5px;margin:14px 0 16px}
+.marks i{display:block;height:9px;border-radius:var(--radius-pill);border:1px solid}
+.marks i.fact{width:64px;background:var(--unsupported-bg);border-color:var(--unsupported-fg)}
+.marks i.op{width:44px;background:var(--ink-50);border-color:var(--border-subtle)}
+.legend{display:flex;gap:18px;font-family:var(--font-mono);font-size:11px;
+        letter-spacing:var(--tracking-caps);text-transform:uppercase;color:var(--text-muted)}
+.legend span{display:flex;align-items:center;gap:7px}
+.legend b{display:block;width:20px;height:8px;border-radius:var(--radius-pill);border:1px solid}
+.legend .f{background:var(--unsupported-bg);border-color:var(--unsupported-fg)}
+.legend .o{background:var(--ink-50);border-color:var(--border-subtle)}
+
+.quote-bad{
+  font-family:var(--font-mono);font-size:14px;color:var(--text-body);
+  background:var(--surface-sunken);border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);padding:11px 14px;margin:14px 0 12px;
+}
+
+/* --- the accreting envelope rail --- */
+.flow{display:flex;align-items:center;gap:0;margin-top:auto}
+.flow-step{
+  flex:1;background:var(--surface-card);border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);padding:11px 13px;
+}
+.flow-step .eyebrow{font-size:10px;margin-bottom:6px}
+.flow-step code{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);
+                display:block;line-height:1.5}
+.flow-step code em{font-style:normal;background:var(--highlight-bg);
+                   border-bottom:2px solid var(--highlight-line);color:var(--text-strong);
+                   padding:0 2px}
+.flow-arrow{flex:0 0 40px;text-align:center;font-family:var(--font-mono);
+            font-size:16px;color:var(--ink-400)}
+
+/* --- slide 5: the evidence card --- */
+.evidence{border:1px solid var(--verified-fg);background:var(--verified-bg);
+          border-radius:var(--radius-lg);padding:20px}
+.evidence .claim-line{font-size:19px;line-height:1.5;color:var(--text-strong);
+                      font-weight:500;margin-bottom:14px}
+.evidence .why{font-size:14px;line-height:1.6;color:var(--text-body);margin-bottom:16px}
+.evidence .why sup{font-family:var(--font-mono);font-size:10px;color:var(--verified-fg);
+                   font-weight:600}
+.refs{border-top:1px solid rgba(14,124,102,.25);padding-top:13px;display:grid;gap:11px}
+.ref{display:flex;gap:10px;align-items:flex-start}
+.ref .n{font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--verified-fg);
+        border:1px solid var(--verified-fg);border-radius:var(--radius-xs);
+        padding:1px 5px;margin-top:2px;flex:0 0 auto}
+.ref .body{min-width:0}
+.ref .src{font-family:var(--font-mono);font-size:11.5px;color:var(--verified-fg);
+          display:block;margin-bottom:2px}
+.ref .ex{font-size:12.5px;line-height:1.45;color:var(--text-muted)}
+
+                 border-radius:var(--radius-pill);border:1px solid}
+.evidence{max-width:860px}
+.kicker{margin-top:24px;font-size:16px;line-height:1.55;color:var(--text-muted);max-width:74ch}
+</style>
+</head>
+<body>
+
+<div id="stage">
+
+  <!-- 1 ---------------------------------------------------------------- -->
+  <section class="slide title-slide">
+    <p class="eyebrow">Team 15 · DevOps for GenAI · Ottawa 2026</p>
+    <h1 style="margin:14px 0 18px">fact-checker</h1>
+    <p class="lede" style="max-width:66ch">
+      Three small programs and two JSON contracts. Prose goes in; every claim comes
+      back with a verdict and the sources behind it.
+    </p>
+    <div class="rail" style="margin-top:26px;border-top:1px solid var(--border-subtle)">
+      <span class="eyebrow">Theme</span>
+      <span class="mono" style="font-size:13px;color:var(--text-body)">
+        AI reliability engineering / hallucination detection
+      </span>
+    </div>
+    <div class="roster">
+      <span>Matt Krainski</span><span>Ben Bueno</span>
+      <span>Victor Curado</span>
+    </div>
+  </section>
+
+  <!-- 2 ---------------------------------------------------------------- -->
+  <section class="slide">
+    <div class="slide-head">
+      <p class="eyebrow">Problem</p>
+      <h2>Reading a claim and checking a claim are two different jobs.<br>Only one of them scales.</h2>
+    </div>
+    <div class="slide-body">
+      <div class="card" style="margin-bottom:20px">
+        <p class="eyebrow" style="margin-bottom:10px">A paragraph a model wrote</p>
+        <p style="font-size:17px;line-height:1.75;max-width:64ch">
+          <span class="claim">Water boils at 100 °C at sea level</span>, which is
+          <span class="opinion-span">the most elegant constant in physics</span>, and
+          <span class="claim">the figure was fixed by the CGPM in 1954</span>.
+        </p>
+        <small style="margin-top:12px">
+          Two checkable claims and one opinion, in one sentence. A reader has to sort
+          them before a single source can be pulled.
+        </small>
+      </div>
+      <div class="grid-3">
+        <div class="card">
+          <p class="eyebrow" style="margin-bottom:8px">Today</p>
+          <p style="font-size:13.5px;color:var(--text-muted)">A person reads the whole
+          thing and judges by hand, or nobody checks at all.</p>
+        </div>
+        <div class="card">
+          <p class="eyebrow" style="margin-bottom:8px">The cost</p>
+          <p style="font-size:13.5px;color:var(--text-muted)">A model drafts a page in
+          seconds. Checking that same page still costs a person an afternoon.</p>
+        </div>
+        <div class="card">
+          <p class="eyebrow" style="margin-bottom:8px">What we want</p>
+          <p style="font-size:13.5px;color:var(--text-muted)">A verdict per claim, the
+          source under it, and a plain answer where the evidence settles nothing.</p>
+        </div>
+      </div>
+    </div>
+    <div class="slide-foot"><span>fact-checker</span><span>Problem</span></div>
+  </section>
+
+  <!-- 3 ---------------------------------------------------------------- -->
+  <section class="slide">
+    <div class="slide-head">
+      <p class="eyebrow">Architecture</p>
+      <h2>Three programs. Two contracts. No shared state.</h2>
+    </div>
+    <div class="slide-body">
+      <div class="pipe">
+        <div class="stage live">
+          <p class="eyebrow">Stage one</p>
+          <h3>statement-classifier</h3>
+          <p>Labels each statement <b>fact</b> or <b>opinion</b> with a confidence,
+             one model call per statement, through OpenRouter.</p>
+        </div>
+        <div class="link">
+          <span class="contract">statements[]<br>+ classification</span>
+          <span class="arrow">→</span>
+          <span class="contract muted">JSON</span>
+        </div>
+        <div class="stage partial">
+          <p class="eyebrow">Stage two</p>
+          <h3>factchecker</h3>
+          <p>Checks every fact against the web and returns a verdict with references.
+             Opinions pass through untouched.</p>
+        </div>
+        <div class="link">
+          <span class="contract">+ ruling<br>+ error + meta</span>
+          <span class="arrow">→</span>
+          <span class="contract muted">JSON</span>
+        </div>
+        <div class="stage">
+          <p class="eyebrow">Stage three</p>
+          <h3>display</h3>
+          <p>Reads a rulings file the user picks and lays the claims out beside their
+             evidence.</p>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-top:22px">
+        <div class="card">
+          <p class="eyebrow" style="margin-bottom:10px">Why split it three ways</p>
+          <ul>
+            <li>Each stage is a package with its own lockfile, its own tests, its own CI job.</li>
+            <li>Each is a library and a CLI, so it composes in a shell pipe or an import.</li>
+            <li>The contract is the only coupling. Any stage can be rewritten behind it.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <p class="eyebrow" style="margin-bottom:10px">The four verdicts</p>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+            <span class="chip supported">supported</span>
+            <span class="chip refuted">refuted</span>
+            <span class="chip mixed">mixed</span>
+            <span class="chip unverifiable">unverifiable</span>
+          </div>
+          <small><b style="color:var(--text-body)">unverifiable is a finding, not a
+          failure.</b> It means the search ran and the evidence did not settle the
+          claim. The tool reports what the evidence shows; it does not establish
+          truth, and its vocabulary says so.</small>
+        </div>
+      </div>
+    </div>
+    <div class="slide-foot"><span>fact-checker</span><span>Architecture</span></div>
+  </section>
+
+  <!-- 4 ---------------------------------------------------------------- -->
+  <section class="slide">
+    <div class="slide-head">
+      <p class="eyebrow">The insight</p>
+      <h2>Sort before you spend.</h2>
+    </div>
+    <div class="slide-body" style="display:flex;flex-direction:column">
+      <div class="grid-2">
+        <div class="card">
+          <p class="eyebrow">Most sentences cannot be checked at all</p>
+          <div class="marks">
+            <i class="fact"></i><i class="op"></i><i class="op"></i><i class="fact"></i>
+            <i class="op"></i><i class="fact"></i><i class="op"></i><i class="op"></i>
+            <i class="fact"></i><i class="op"></i><i class="op"></i><i class="fact"></i>
+          </div>
+          <div class="legend" style="margin-bottom:14px">
+            <span><b class="f"></b>checkable claim</span>
+            <span><b class="o"></b>opinion, framing, prediction</span>
+          </div>
+          <p style="font-size:14px;line-height:1.6;color:var(--text-body)">
+            Searching is where the money goes — a tool-using loop per claim. Labelling
+            is one small call. So the cheap call decides whether to spend the expensive
+            one, and an opinion never reaches the network.
+          </p>
+        </div>
+        <div class="card">
+          <p class="eyebrow">A claim on its own stops being checkable</p>
+          <div class="quote-bad">"The figure was fixed in 1954."</div>
+          <p style="font-size:14px;line-height:1.6;color:var(--text-body)">
+            Pull a sentence out of its paragraph and it loses what it pointed at. Nothing
+            can search that.
+          </p>
+          <p style="font-size:14px;line-height:1.6;color:var(--text-body);margin-top:10px">
+            So every claim travels with the text around it. That context is used to
+            <b>read</b> the claim — never judged in its place.
+          </p>
+        </div>
+      </div>
+
+      <div class="flow">
+        <div class="flow-step">
+          <p class="eyebrow">In</p>
+          <code>statement<br>surroundingContext</code>
+        </div>
+        <div class="flow-arrow">&rarr;</div>
+        <div class="flow-step">
+          <p class="eyebrow">Sorted</p>
+          <code><em>classification</em><br>fact · 0.82</code>
+        </div>
+        <div class="flow-arrow">&rarr;</div>
+        <div class="flow-step">
+          <p class="eyebrow">Checked</p>
+          <code><em>ruling</em><br>verdict · references</code>
+        </div>
+        <div class="flow-arrow">&rarr;</div>
+        <div class="flow-step">
+          <p class="eyebrow">Shown</p>
+          <code>claim beside<br>its evidence</code>
+        </div>
+      </div>
+      <small style="margin-top:10px">
+        Each stage adds keys and rewrites nothing. Opinions stop after the first one.
+      </small>
+    </div>
+    <div class="slide-foot"><span>fact-checker</span><span>The insight</span></div>
+  </section>
+
+  <!-- 5 ---------------------------------------------------------------- -->
+  <section class="slide">
+    <div class="slide-head">
+      <p class="eyebrow">What you get</p>
+      <h2>Every claim, beside the evidence for it.</h2>
+    </div>
+    <div class="slide-body">
+      <div class="evidence">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:12px">
+          <span class="chip supported">supported</span>
+          <span class="mono" style="font-size:11px;color:var(--verified-fg)">confidence 0.92</span>
+        </div>
+        <p class="claim-line">Water boils at 100 &deg;C at sea level.</p>
+        <p class="why">
+          At standard atmospheric pressure the boiling point is 100 &deg;C<sup>[1]</sup>,
+          and the scale was fixed at that value by definition<sup>[2]</sup>.
+        </p>
+        <div class="refs">
+          <div class="ref">
+            <span class="n">1</span>
+            <span class="body">
+              <span class="src">nist.gov &rsaquo; thermodynamics</span>
+              <span class="ex">"At 1 atm, water boils at 100 &deg;C."</span>
+            </span>
+          </div>
+          <div class="ref">
+            <span class="n">2</span>
+            <span class="body">
+              <span class="src">bipm.org &rsaquo; si-brochure</span>
+              <span class="ex">"The normal boiling point is defined as&hellip;"</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <p class="kicker">
+        We report what the evidence shows. Where it settles nothing, the tool says so
+        rather than guessing &mdash; and that answer is a result, not an error.
+      </p>
+    </div>
+    <div class="slide-foot"><span>fact-checker</span><span>Team 15</span></div>
+  </section>
+
+</div>
+
+<div class="hud">
+  <button id="prev" aria-label="Previous slide">Prev</button>
+  <button id="next" aria-label="Next slide">Next</button>
+  <span id="counter">1 / 5</span>
+</div>
+
+<script>
+const slides = [...document.querySelectorAll('.slide')];
+const stage = document.getElementById('stage');
+const counter = document.getElementById('counter');
+let at = 0;
+
+function show(i){
+  at = Math.max(0, Math.min(slides.length - 1, i));
+  slides.forEach((s, n) => s.classList.toggle('is-current', n === at));
+  counter.textContent = `${at + 1} / ${slides.length}`;
+  location.hash = at + 1;
+}
+
+// The stage is a fixed 1280x720 box; scale it to whatever viewport it opens in.
+function fit(){
+  const pad = 48;
+  const scale = Math.min(
+    (window.innerWidth - pad) / 1280,
+    (window.innerHeight - pad) / 720
+  );
+  stage.style.transform = `scale(${scale})`;
+}
+
+document.addEventListener('keydown', e => {
+  if (['ArrowRight','PageDown',' ','Enter'].includes(e.key)) { e.preventDefault(); show(at + 1); }
+  if (['ArrowLeft','PageUp','Backspace'].includes(e.key))    { e.preventDefault(); show(at - 1); }
+  if (e.key === 'Home') show(0);
+  if (e.key === 'End')  show(slides.length - 1);
+});
+document.getElementById('next').addEventListener('click', () => show(at + 1));
+document.getElementById('prev').addEventListener('click', () => show(at - 1));
+stage.addEventListener('click', e => { if (!e.target.closest('a')) show(at + 1); });
+window.addEventListener('resize', fit);
+
+fit();
+show(Math.max(0, (parseInt(location.hash.slice(1), 10) || 1) - 1));
+</script>
+</body>
+</html>
