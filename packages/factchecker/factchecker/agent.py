@@ -31,7 +31,7 @@ from pydantic import ValidationError
 
 from factchecker.checker import CheckOutcome
 from factchecker.config import Settings
-from factchecker.errors import CheckFailed
+from factchecker.errors import AuthenticationFailed, CheckFailed
 from factchecker.models import IdentifiedStatement, Ruling
 from factchecker.prompts import (
     build_budget_reminder,
@@ -42,6 +42,10 @@ from factchecker.prompts import (
 from factchecker.tools import SEARCH_TOOL_NAME
 
 MALFORMED_RULING = "malformed_ruling"
+
+# The statuses a gateway refuses a credential with. OpenRouter's 402 is not one of
+# them: it says the account has no credit left, which a new key does not fix.
+_REFUSED_STATUSES = frozenset({401, 403})
 
 _BUDGET_SPENT = (
     "This call was not made: the tool-call budget for this claim is spent. "
@@ -171,8 +175,9 @@ class AgentChecker:
             check asked for.
 
         Raises:
-            AuthenticationFailed: A credential was rejected. It travels on from the
-                tool layer untouched, because it ends the run and not this statement.
+            AuthenticationFailed: A credential was rejected — OpenRouter's key on a
+                model request, or Bright Data's token on a tool call. Either one ends
+                the run rather than this statement.
             CheckFailed: The ruling did not validate, and nor did the one the model
                 wrote after being shown why. The kind is `malformed_ruling`.
         """
@@ -223,7 +228,7 @@ class AgentChecker:
         Every turn is a billed request, the ruling turn included, so every turn's
         usage is added here.
         """
-        answer = await model.ainvoke([*run.conversation, HumanMessage(riding)])
+        answer = await _asked(model, [*run.conversation, HumanMessage(riding)])
         prompt_tokens, completion_tokens = _tokens(answer)
         run.prompt_tokens += prompt_tokens
         run.completion_tokens += completion_tokens
@@ -320,6 +325,46 @@ class AgentChecker:
                 ToolMessage(content=_SEARCHING_IS_OVER, tool_call_id=call["id"])
             )
         return answer
+
+
+async def _asked(
+    model: Runnable[LanguageModelInput, AIMessage], turn: Sequence[BaseMessage]
+) -> AIMessage:
+    """Ask one model once, and read a refused credential as the end of the run.
+
+    Every model request a run makes is made here, which is what makes this the place
+    to read a rejected `OPENROUTER_API_KEY`. Left as the client raised it, that
+    refusal fails one statement as `check_failed` and the run goes on to make the same
+    rejected request for every statement left in the payload.
+
+    The status is read off whatever was raised rather than matched against a class.
+    `openai` is a dependency of `langchain-openai` rather than of this package, and
+    `resilience.classify` reads the `httpx` the MCP client is built on, which is not
+    the one the model client is built on.
+
+    Args:
+        model: One of the two bound models the checker holds.
+        turn: The conversation to send, with the riding message already on the end.
+
+    Returns:
+        The model's answer.
+
+    Raises:
+        AuthenticationFailed: OpenRouter refused the credential. The run ends, because
+            every statement left would be refused in the same way.
+    """
+    try:
+        return await model.ainvoke(turn)
+    except Exception as failure:
+        status = getattr(failure, "status_code", None)
+        if status in _REFUSED_STATUSES:
+            # The cause is dropped. What an operator needs is the status and the
+            # service that returned it, and the client's own text is the gateway's
+            # error body repeated back.
+            raise AuthenticationFailed(
+                f"OpenRouter returned {status} for the model request"
+            ) from None
+        raise
 
 
 def _correction(rejected: ValidationError) -> str:

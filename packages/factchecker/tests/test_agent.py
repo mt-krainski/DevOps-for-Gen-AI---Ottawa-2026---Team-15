@@ -20,7 +20,7 @@ object, and it opens no socket.
 
 import asyncio
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Self
 
@@ -329,17 +329,8 @@ class _Gateway:
         )
 
     def model(self) -> ChatOpenAI:
-        """The real client this package builds, pointed at this transport.
-
-        The key is a literal that no service would accept, and no request leaves the
-        process to find out.
-        """
-        return ChatOpenAI(
-            model="google/gemma-4-31b-it",
-            base_url=OPENROUTER_BASE_URL,
-            api_key=SecretStr("not-a-real-key"),
-            http_async_client=httpx.AsyncClient(transport=httpx.MockTransport(self)),
-        )
+        """The real client this package builds, pointed at this transport."""
+        return _client(self)
 
     def tool_named(self, name: str, request: int = 0) -> dict[str, object]:
         """One request's entry for the named tool, as it went on the wire."""
@@ -348,6 +339,43 @@ class _Gateway:
             for one in self.sent[request]["tools"]
             if one["function"]["name"] == name
         )
+
+
+class _Refusing:
+    """OpenRouter's endpoint, refusing every request with the status it was given.
+
+    Every request body is kept, so a test reads how many the refusal cost.
+    """
+
+    def __init__(self, status: int) -> None:
+        self.status = status
+        self.sent: list[dict[str, object]] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Record the body, and answer with the refusal and nothing else."""
+        self.sent.append(json.loads(request.content))
+        return httpx.Response(
+            self.status,
+            json={"error": {"message": "no auth credentials found"}},
+        )
+
+    def model(self) -> ChatOpenAI:
+        """The real client this package builds, pointed at this transport."""
+        return _client(self)
+
+
+def _client(answer: Callable[[httpx.Request], httpx.Response]) -> ChatOpenAI:
+    """The real client this package builds, pointed at a transport that answers itself.
+
+    The key is a literal that no service would accept, and no request leaves the
+    process to find out.
+    """
+    return ChatOpenAI(
+        model="google/gemma-4-31b-it",
+        base_url=OPENROUTER_BASE_URL,
+        api_key=SecretStr("not-a-real-key"),
+        http_async_client=httpx.AsyncClient(transport=httpx.MockTransport(answer)),
+    )
 
 
 def _statement(claim: str = CLAIM, identifier: str = "s1") -> IdentifiedStatement:
@@ -978,6 +1006,41 @@ def test_a_well_formed_answer_from_the_real_client_reports_what_it_billed() -> N
     assert outcome.prompt_tokens == 634
     assert outcome.completion_tokens == 128
     assert outcome.searches == 0
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_model_request_the_gateway_refuses_ends_the_run(status: int) -> None:
+    """A rejected OpenRouter key fails every statement alike, so it ends the run.
+
+    Left to the SDK, the refusal arrives as its own error class, becomes that one
+    statement's `check_failed`, and every statement after it repeats the same rejected
+    request while the command still exits with a payload and a zero.
+    """
+    refusing = _Refusing(status)
+    checker = AgentChecker(refusing.model(), _real_tools(), _settings())
+
+    with pytest.raises(AuthenticationFailed) as raised:
+        asyncio.run(checker.check(_statement()))
+
+    assert "OpenRouter" in str(raised.value)
+    assert str(status) in str(raised.value)
+    assert len(refusing.sent) == 1
+
+
+def test_a_model_request_that_fails_some_other_way_is_left_as_it_is() -> None:
+    """Only a refused credential ends the run. Everything else fails one statement.
+
+    What the client raises for a 400 is a class of its own, from a package this one
+    does not depend on, so the assertion is that the failure is not the run-ending one
+    rather than that it is any particular class.
+    """
+    refusing = _Refusing(400)
+    checker = AgentChecker(refusing.model(), _real_tools(), _settings())
+
+    with pytest.raises(Exception) as raised:
+        asyncio.run(checker.check(_statement()))
+
+    assert not isinstance(raised.value, AuthenticationFailed)
 
 
 def test_a_statements_search_count_is_its_own_while_another_runs_beside_it() -> None:
