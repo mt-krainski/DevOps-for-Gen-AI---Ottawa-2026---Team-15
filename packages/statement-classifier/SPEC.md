@@ -27,6 +27,105 @@ A standalone Python package, `statement-classifier`, that takes a batch of state
 12. As a maintainer of the hackathon monorepo, I want this package to sit under `packages/` and declare its own checks, so that it shares tooling conventions with the other subpackages teammates are building alongside it.
 13. As a future maintainer, I want the input/output shapes defined as typed schemas (Pydantic), so that the contract between this stage and the rest of the pipeline is explicit and validated, not just documented in prose.
 
+## Paragraph Mode
+
+Added after the MVP above shipped. A second, independent way to call this package: instead of the
+caller pre-splitting text into statements with their own `surroundingContext`, the caller hands over
+a single paragraph, and this package does the splitting itself before classifying each piece.
+
+**Why a second mode, not a replacement**
+- The original mode (statements pre-split by the caller) stays exactly as documented above —
+  unchanged input/output shape, unchanged CLI subcommand, unchanged Python functions. A teammate
+  already integrated against it is unaffected.
+- Paragraph mode is additive: a new input shape, a new output shape, a new CLI subcommand, and new
+  Python functions, sitting alongside the originals.
+
+**Segmentation**
+- A paragraph is split into statements by a second, separate LLM call (not folded into the per-
+  statement classification call): one call, structured output `{"statements": ["...", "..."]}`,
+  instructed to preserve the original wording verbatim and split on clause boundaries where a
+  conjunction changes what's being claimed (e.g. "but", "although"), not only on sentence-ending
+  punctuation — this is what produces the two-statement split in the example below.
+- Keeping segmentation as its own call (rather than one combined split-and-classify call) means the
+  existing per-statement `classify_one` — its retries, its per-statement isolation, its concurrency —
+  is reused unchanged for the classification half of paragraph mode.
+- The segmented statement becomes `statement`; the whole original paragraph becomes that statement's
+  `surroundingContext` for the classification call (the paragraph is the only context a paragraph-
+  mode caller supplies).
+
+**Data shapes (Pydantic models)**
+
+Input:
+```json
+{ "paragraph": "Carney confirmed he was “reluctantly” adding tariffs that would add costs in some areas for Canadians, but insisted they were necessary to retaliate against United States President Donald Trump’s levies" }
+```
+
+Output:
+```json
+{
+  "statements": [
+    {
+      "statement": "Carney confirmed he was “reluctantly” adding tariffs that would add costs in some areas for Canadians",
+      "classification": { "class": "fact", "confidence": 0.95 },
+      "error": null
+    },
+    {
+      "statement": "but insisted they were necessary to retaliate against United States President Donald Trump’s levies",
+      "classification": { "class": "opinion", "confidence": 0.95 },
+      "error": null
+    }
+  ]
+}
+```
+
+Unlike the original mode's output, there is no `surroundingContext` field per item — the paragraph
+was the caller's input, not per-statement data worth echoing back. `error` is kept, for the same
+per-statement-isolation reason as the original mode: one statement's classification failing (after
+retries) sets that item's `classification` to `null` and populates `error`, without discarding its
+siblings.
+
+**Error handling**
+- One new batch-level code, `SEGMENTATION_ERROR`: the segmentation call failed on every attempt, or
+  its output didn't satisfy the `{"statements": [...]}` schema after retries. Segmentation has no
+  per-item granularity to isolate a failure onto — a paragraph that can't be split yields nothing to
+  classify — so this aborts the whole call, the same way `INVALID_INPUT` or `AUTH_ERROR` do.
+- An empty/whitespace-only `paragraph` is rejected as `INVALID_INPUT` before any LLM call, same as a
+  malformed statements-mode batch.
+- A `paragraph` the segmentation model reduces to zero statements (e.g. no checkable or opinionated
+  content at all) is not an error: `{"statements": []}` is returned.
+- Every other failure mode (missing/invalid API key, a rejected credential during either the
+  segmentation or a classification call, a per-statement classification failure) reuses the existing
+  codes and behavior documented above.
+
+**Python API**
+```python
+async def classify_paragraph(
+    payload: ParagraphInput, *, concurrency: int = 5
+) -> ParagraphClassifierOutput: ...
+```
+Plus a sync wrapper, `classify_paragraph_sync`, mirroring `classify_statements_sync`.
+
+**CLI**
+- `statement-classifier classify-paragraph --input <path|-> --output <path|->` — same `-`-means-
+  stdin/stdout convention, same `--concurrency` flag, same exit-code contract as `classify`
+  (`SEGMENTATION_ERROR` falls under the existing "unexpected/internal error" exit code, `1`, since it
+  isn't one of the three codes with a dedicated exit code).
+
+**Testing additions**
+- Segmentation splits a paragraph into the expected statements given a mocked model response,
+  preserving order.
+- The two-statement example above (fact clause before "but", opinion clause after) classifies as
+  `fact` then `opinion` given mocked responses for both the segmentation and classification calls.
+- A paragraph that segments to zero statements returns an empty result without any classification
+  call being made.
+- Segmentation failing on every attempt raises `ClassifierError(code="SEGMENTATION_ERROR")` before
+  any classification call is made.
+- An empty/whitespace `paragraph` raises `ClassifierError(code="INVALID_INPUT")` before any LLM call.
+- One statement's classification failing (after the paragraph was split successfully) is isolated
+  onto that item, the same isolation test as the original mode, run through paragraph mode instead.
+- CLI: valid paragraph input file → output file written, exit code `0`, no `surroundingContext` key
+  present in the written JSON.
+
 ## Implementation Decisions
 
 **Package layout**
@@ -137,6 +236,7 @@ Plus a sync wrapper (`classify_statements_sync`) for callers not already in an a
 ## Out of Scope
 
 - Web search / evidence retrieval and truthiness verification (`ruling`, `references`, etc.) — a separate downstream subpackage.
+- General-purpose text/document extraction (pulling statements out of a full article, PDF, or multi-paragraph document) — paragraph mode splits one paragraph the caller hands over; it does not locate or extract paragraphs from a larger source.
 - More than two classification classes (e.g. `not-a-claim`, `unverifiable`) — possible future extension.
 - An HTTP API / server — library + CLI only for now.
 - Batching multiple statements into a single LLM call.
@@ -148,5 +248,5 @@ Plus a sync wrapper (`classify_statements_sync`) for callers not already in an a
 ## Further Notes
 
 - The `OPENROUTER_MODEL` default in this spec is a placeholder; pick the actual default during implementation based on quick cost/accuracy testing against real sample statements, since OpenRouter model availability and pricing shift often.
-- The layout (`packages/<name>/`, each package self-contained) anticipates sibling packages — e.g. a statement-extraction stage and the fact-verification stage — sharing tooling conventions without sharing a lockfile.
+- The layout (`packages/<name>/`, each package self-contained) anticipates sibling packages — e.g. the fact-verification stage — sharing tooling conventions without sharing a lockfile. Paragraph-level statement splitting now lives in this package (see "Paragraph Mode" above); a hypothetical future document-level extraction stage (locating paragraphs within a larger source) would still be a separate concern.
 - This package intentionally does not know anything about the fact-verification stage's needs beyond the documented output shape; keep that boundary as the sole integration contract between the two.

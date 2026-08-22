@@ -12,11 +12,14 @@ from statement_classifier.models import (
     Classification,
     ClassifiedStatement,
     ClassifierOutput,
+    ParagraphClassifiedStatement,
+    ParagraphClassifierOutput,
 )
 
 VALID_INPUT = {
     "statements": [{"surroundingContext": "ctx", "statement": "The sky is blue"}]
 }
+VALID_PARAGRAPH_INPUT = {"paragraph": "The sky is blue"}
 
 
 def _fake_output() -> ClassifierOutput:
@@ -24,6 +27,18 @@ def _fake_output() -> ClassifierOutput:
         statements=[
             ClassifiedStatement(
                 surrounding_context="ctx",
+                statement="The sky is blue",
+                classification=Classification(**{"class": "fact", "confidence": 0.9}),
+                error=None,
+            )
+        ]
+    )
+
+
+def _fake_paragraph_output() -> ParagraphClassifierOutput:
+    return ParagraphClassifierOutput(
+        statements=[
+            ParagraphClassifiedStatement(
                 statement="The sky is blue",
                 classification=Classification(**{"class": "fact", "confidence": 0.9}),
                 error=None,
@@ -170,3 +185,62 @@ def test_concurrency_override_is_passed_through(
 
     assert exit_code == 0
     assert captured["concurrency"] == 10
+
+
+def test_classify_paragraph_valid_file_writes_output_with_exit_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A paragraph input is split, classified, and written under exit code 0."""
+    monkeypatch.setattr(
+        cli,
+        "classify_paragraph_sync",
+        lambda payload, concurrency: _fake_paragraph_output(),
+    )
+    input_path = tmp_path / "input.json"
+    output_path = tmp_path / "output.json"
+    input_path.write_text(json.dumps(VALID_PARAGRAPH_INPUT))
+
+    exit_code = cli.main(
+        [
+            "classify-paragraph",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    result = json.loads(output_path.read_text())
+    assert result["statements"][0]["classification"]["class"] == "fact"
+    assert "surroundingContext" not in result["statements"][0]
+
+
+def test_classify_paragraph_malformed_json_exits_nonzero_with_stderr_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Unparseable input is reported as JSON on stderr, not as a traceback."""
+    input_path = tmp_path / "input.json"
+    input_path.write_text("{not valid json")
+
+    exit_code = cli.main(["classify-paragraph", "--input", str(input_path)])
+
+    assert exit_code != 0
+    err = json.loads(capsys.readouterr().err)
+    assert err["code"] == ErrorCode.INVALID_INPUT
+    assert "message" in err
+
+
+def test_classify_paragraph_missing_api_key_exits_three(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A missing credential is a config failure, told apart from bad input."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    input_path = tmp_path / "input.json"
+    input_path.write_text(json.dumps(VALID_PARAGRAPH_INPUT))
+
+    exit_code = cli.main(["classify-paragraph", "--input", str(input_path)])
+
+    assert exit_code == 3
+    err = json.loads(capsys.readouterr().err)
+    assert err["code"] == ErrorCode.MISSING_API_KEY

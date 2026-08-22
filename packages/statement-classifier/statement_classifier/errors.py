@@ -13,6 +13,7 @@ class ErrorCode(StrEnum):
     LLM_TIMEOUT = "LLM_TIMEOUT"
     PARSE_ERROR = "PARSE_ERROR"
     IO_ERROR = "IO_ERROR"
+    SEGMENTATION_ERROR = "SEGMENTATION_ERROR"
 
 
 class ClassifierError(Exception):
