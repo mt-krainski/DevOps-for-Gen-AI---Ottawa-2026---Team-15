@@ -148,11 +148,27 @@ def test_classification_confidence_outside_zero_to_one_is_rejected(
         Classification.model_validate({"class": "fact", "confidence": confidence})
 
 
+@pytest.mark.parametrize("confidence", [0.0, 1.0])
+def test_classification_confidence_accepts_both_endpoints(confidence: float) -> None:
+    """The interval is closed, so both endpoints are inside it."""
+    wire = {"class": "fact", "confidence": confidence}
+
+    assert Classification.model_validate(wire).confidence == confidence
+
+
 @pytest.mark.parametrize("confidence", [-0.1, 1.1])
 def test_ruling_confidence_outside_zero_to_one_is_rejected(confidence: float) -> None:
     """A ruling's confidence carries the same closed interval."""
     with pytest.raises(ValidationError):
         Ruling.model_validate({**WIRE_RULING, "confidence": confidence})
+
+
+@pytest.mark.parametrize("confidence", [0.0, 1.0])
+def test_ruling_confidence_accepts_both_endpoints(confidence: float) -> None:
+    """A ruling's interval is closed at both ends too."""
+    ruling = Ruling.model_validate({**WIRE_RULING, "confidence": confidence})
+
+    assert ruling.confidence == confidence
 
 
 def test_meta_writes_a_zero_utc_offset_as_z() -> None:
@@ -166,6 +182,12 @@ def test_meta_writes_a_zero_utc_offset_as_z() -> None:
     )
 
     assert meta.model_dump(mode="json") == WIRE_META
+
+
+def test_meta_rejects_a_naive_datetime() -> None:
+    """A datetime with no offset cannot write the `Z` suffix, so it is refused."""
+    with pytest.raises(ValidationError):
+        Meta.model_validate({**WIRE_META, "startedAt": "2026-08-22T14:03:11"})
 
 
 def test_output_statement_writes_ruling_and_error_when_both_are_null() -> None:

@@ -1,9 +1,8 @@
 """The wire contract: the JSON shapes this package reads and writes."""
 
-from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 Verdict = Literal["supported", "refuted", "mixed", "unverifiable"]
@@ -23,10 +22,10 @@ class _WireModel(BaseModel):
 
 
 class Classification(_WireModel):
-    # `class` is a keyword, so the field is `class_`. The wire key comes from
-    # validation_alias and serialization_alias, which fall back to `alias` only
-    # where the alias generator has left them empty. Setting all three keeps the
-    # wire key out of that resolution.
+    # `class` is a keyword, so the field is `class_`. The alias generator fills
+    # any alias slot left empty, and it fills it with the generated name
+    # `class_` — not with `alias`. Writing all three slots leaves nothing to
+    # fill, so the wire key never depends on which of them `Field` populates.
     class_: StatementClass = Field(
         alias="class",
         validation_alias="class",
@@ -95,8 +94,8 @@ class Usage(_WireModel):
 
 class Meta(_WireModel):
     model: str
-    started_at: datetime
-    finished_at: datetime
+    started_at: AwareDatetime
+    finished_at: AwareDatetime
     counts: Counts
     usage: Usage
 

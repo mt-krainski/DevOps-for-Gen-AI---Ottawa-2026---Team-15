@@ -62,6 +62,9 @@ ignore = ["D104", "D100", "D101", "D106"]
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.coverage.run]
+source = ["factchecker"]
+
 [tool.poe.executor]
 type = "uv"
 
