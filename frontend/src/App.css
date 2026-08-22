@@ -1,0 +1,271 @@
+.app {
+  min-height: 100vh;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 48px 80px;
+}
+
+.header {
+  height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #d8d6d0;
+}
+
+.brand {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.header-actions button {
+  border: 1px solid #d0cec7;
+  background: transparent;
+  padding: 9px 14px;
+  border-radius: 5px;
+  color: #333;
+  cursor: pointer;
+}
+
+.header-actions button:hover {
+  background: #ebe9e3;
+}
+
+.analysis-header {
+  padding: 72px 0 42px;
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #77746d;
+}
+
+.analysis-header h1 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(42px, 5vw, 72px);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+
+.statement-count {
+  margin: 18px 0 0;
+  color: #6f6d67;
+  font-size: 15px;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  border-top: 1px solid #c9c7c0;
+  border-bottom: 1px solid #c9c7c0;
+}
+
+.summary div {
+  padding: 20px 18px;
+  border-right: 1px solid #d8d6d0;
+}
+
+.summary div:last-child {
+  border-right: none;
+}
+
+.summary strong {
+  display: block;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 34px;
+  font-weight: 400;
+}
+
+.summary span {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #77746d;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.75fr);
+  margin-top: 48px;
+}
+
+.statements {
+  padding-right: 48px;
+}
+
+.section-heading {
+  margin-bottom: 4px;
+}
+
+.statement {
+  position: relative;
+}
+
+.statement-toggle {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  padding: 28px 0;
+  border: 0;
+  border-top: 1px solid #d8d6d0;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.statement:last-child {
+  border-bottom: 1px solid #d8d6d0;
+}
+
+.statement-number {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 15px;
+  color: #8a8882;
+}
+
+.classification {
+  display: inline-block;
+  margin-bottom: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #77746d;
+}
+
+.statement-text {
+  max-width: 780px;
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 25px;
+  line-height: 1.35;
+}
+
+.verdict {
+  display: inline-block;
+  margin-top: 14px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.inspector {
+  min-height: 400px;
+  padding-left: 36px;
+  border-left: 1px solid #d0cec7;
+}
+
+.inspector p:last-child {
+  max-width: 320px;
+  margin-top: 40px;
+  color: #77746d;
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .app {
+    padding: 0 24px 60px;
+  }
+
+  .summary {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .summary div:nth-child(3) {
+    border-right: none;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .statements {
+    padding-right: 0;
+  }
+
+  .inspector {
+    margin-top: 40px;
+    padding: 32px 0 0;
+    border-left: none;
+    border-top: 1px solid #d0cec7;
+  }
+}
+
+.statement:last-child .statement-toggle {
+  border-bottom: 1px solid #d8d6d0;
+}
+
+.statement-toggle:hover {
+  background: rgba(0, 0, 0, 0.015);
+}
+
+.statement-toggle:focus-visible {
+  outline: 2px solid #77746d;
+  outline-offset: 4px;
+}
+
+.statement-details {
+  margin-left: 48px;
+  padding: 0 0 32px;
+  border-bottom: 1px solid #d8d6d0;
+}
+
+.detail-section {
+  padding: 20px 0;
+  border-top: 1px solid #e2e0da;
+}
+
+.detail-section:first-child {
+  border-top: 0;
+}
+
+.detail-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #77746d;
+}
+
+.detail-value {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.detail-value strong {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 22px;
+  font-weight: 400;
+}
+
+.detail-value span {
+  font-size: 13px;
+  color: #77746d;
+}
+
+.detail-text {
+  max-width: 700px;
+  margin: 0;
+  color: #46443f;
+  line-height: 1.65;
+}
