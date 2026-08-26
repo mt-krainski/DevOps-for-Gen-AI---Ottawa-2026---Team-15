@@ -1,0 +1,99 @@
+[project]
+name = "fact-checker"
+version = "0.0.1"
+description = "Agent that checks classified statements against the web and rules with cited sources"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain-core>=1.6,<2.0.0",
+    "langchain-mcp-adapters>=0.3.2,<0.4.0",
+    "langchain-openai>=1.6,<2.0.0",
+    "openai>=2.45,<3.0.0",
+    "httpx>=0.27,<1.0.0",
+    "pydantic>=2.11,<3.0.0",
+    "python-dotenv>=1.0,<2.0.0",
+]
+
+[project.scripts]
+fact-checker = "fact_checker.cli:run"
+
+[dependency-groups]
+dev = [
+    "coverage>=7.15.1,<8.0.0",
+    "poethepoet>=0.38.0,<0.39.0",
+    "pytest>=9.1.1,<10.0.0",
+    "pytest-asyncio>=1.0.0,<2.0.0",
+    "ruff>=0.15.22,<0.16.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Without a pytest section of its own, pytest walks up out of the package and
+# adopts the enclosing repository's configuration as its rootdir.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib -m 'not integration'"
+asyncio_mode = "auto"
+markers = ["integration: needs live OpenRouter and Bright Data credentials"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "B",    # flake8-bugbear
+    "A",    # flake8-builtins
+    "C4",   # flake8-comprehensions
+    "D",    # pydocstyle (flake8-docstrings)
+    "ERA",  # eradicate
+    "S",    # flake8-bandit
+    "PGH003",  # blanket `# type: ignore` without a code
+    "PGH004",  # blanket `# noqa` without a code
+    "RUF100",  # unused or stale suppression
+    "TID251",  # banned API; see flake8-tidy-imports.banned-api below
+    "BLE001",  # blind `except Exception`
+    "UP",      # pyupgrade: legacy typing constructs
+    "PTH",     # flake8-use-pathlib
+    "ANN401",  # bare `Any`; the ANN family as a whole is not selected
+]
+ignore = ["D104", "D100", "D101", "D106"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"__future__.annotations" = { msg = "PEP 563 stringization is deprecated; PEP 649 handles forward references natively." }
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.coverage.run]
+source = ["fact_checker"]
+
+[tool.coverage.report]
+fail_under = 80
+
+[tool.poe.executor]
+type = "uv"
+
+[tool.poe.tasks.test]
+sequence = [
+    { cmd = "coverage run -m pytest --showlocals" },
+    { cmd = "coverage report" },
+]
+
+[tool.poe.tasks.test-integration]
+cmd = "pytest -m integration --showlocals"
+
+[tool.poe.tasks.lint]
+sequence = [
+    { cmd = "ruff check ." },
+    { cmd = "ruff format --check ." },
+]
