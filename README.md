@@ -63,10 +63,11 @@ statement gets a log line naming its elapsed time and outcome. That gives cost p
 and failure rate directly from a normal run, with nothing extra to instrument.
 
 **What we have not measured.** Classification accuracy and verdict accuracy. Stage two carries a
-hand-run suite of about twenty cases with the verdict each one should reach, which catches a prompt
-regression on those twenty. That is not a labelled set big enough for an accuracy baseline, and
-nothing measures the classifier at all. We can tell you what a run cost and how long it took. We
-cannot yet tell you how often it was right, and we will not imply otherwise.
+hand-run suite: cases spread across the four verdicts, and opinions that must pass through
+unchecked. It catches a prompt regression on the cases it holds. That is not a labelled set big
+enough for an accuracy baseline, and nothing measures the classifier at all. We can tell you what a
+run cost and how long it took. We cannot yet tell you how often it was right, and we will not imply
+otherwise.
 
 ## Architecture
 
@@ -195,7 +196,7 @@ reported inside the payload and leaves the exit code at zero, so a caller that c
 | Code | `statement-classifier` | `fact-checker` |
 | ---- | ---------------------- | -------------- |
 | `0` | The batch succeeded. Items may still carry errors. | A payload was written. Statements may still carry errors. |
-| `1` | The input could not be read, or the output written. | An unexpected crash. |
+| `1` | The input could not be read, or the output written. | An unexpected crash, or the Bright Data tools could not be loaded. |
 | `2` | The input is not valid JSON, or does not match the shape. | The input could not be read, or failed the contract. |
 | `3` | The credential is missing or was rejected. | A credential was never set, or was rejected. |
 | `4` | — | The payload was built and could not be written. |
@@ -218,7 +219,7 @@ Handbook item P-15 asks for mocked components to be identified plainly. These ar
 | --------- | ----- |
 | `statement-classifier` | **Live.** Real model calls through OpenRouter, structured output, per-statement error isolation. |
 | `fact-checker` contract, orchestration, CLI | **Live.** Runs end to end: reads input, assigns ids, enforces timeouts, aggregates usage, writes the payload. |
-| `fact-checker` checking agent | **Live.** It searches. Each factual statement gets its own agent run against Bright Data's hosted MCP server, spending up to ten search and fetch calls, and rules on what it read with cited sources. References are the model's own and are not checked against the retrieved text — see [Known limitations](#known-limitations). |
+| `fact-checker` checking agent | **Live.** It searches. Each factual statement gets its own agent run against Bright Data's hosted MCP server, spending a bounded budget of search and fetch calls, and rules on what it read with cited sources. References are the model's own and are not checked against the retrieved text — see [Known limitations](#known-limitations). |
 | `display` | **Partly live.** It renders the real ruling shape, from a fixed sample rather than a file the user picks. The file picker is not built. |
 | Extraction of statements from a document | **Does not exist.** Statements arrive already split out, each with its surrounding context. |
 
@@ -291,9 +292,9 @@ What a run emits today, with no extra instrumentation:
   There is no `--verbose` flag on either stage, and stage one has no level to control. At `DEBUG`
   stage two also logs one line per tool call and the traceback behind any failure.
 - **A per-run `meta` block** carrying `startedAt`, `finishedAt`, `counts` (total, checked, skipped,
-  failed) and `usage` (prompt tokens, completion tokens, searches). `searches` counts search calls
-  that reached the provider, so a search retried after a transient failure counts each attempt, and
-  one answered from the run's cache counts none.
+  failed) and `usage` (prompt tokens, completion tokens, searches). `searches` counts the search
+  calls the run made, so a search retried after a transient failure counts each attempt, and one
+  answered from the run's cache counts none.
 
 Cost, throughput and failure rate all come straight off that block.
 
@@ -324,10 +325,10 @@ The checking agent fetches pages the model chooses and feeds them back to it. Th
 untrusted input from an attacker-influenceable source, and this is the larger exposure of the two.
 
 What holds today: the system prompt tells the agent that text the tools return is retrieved web
-content — evidence to weigh, never instruction to follow — and a fetched page is cut at the
-100 000-character ceiling before it reaches the model. That is a statement of intent and a size
-limit. Nothing detects or neutralises an injection attempt, nothing separates page content from
-instruction at the protocol level, and no adversarial test exercises this path.
+content — evidence to weigh, never instruction to follow — and a fetched page is cut at a character
+ceiling before it reaches the model. That is a statement of intent and a size limit. Nothing detects
+or neutralises an injection attempt, nothing separates page content from instruction at the protocol
+level, and no adversarial test exercises this path.
 
 ### 3. Credential disclosure — *mitigated*
 
@@ -340,8 +341,8 @@ traceback yields the endpoint with `***` in the token's place. Because an upstre
 the real URL in a message of its own, every message stage two reports, logs or publishes also passes
 through a scrub that replaces the token wherever it appears.
 
-The OpenRouter key is kept out of the settings object's generated `repr`, because the test task runs
-`pytest --showlocals` and a key printed into a CI log is a key to rotate.
+The settings object's `repr` is written by hand so the OpenRouter key cannot appear in it, because
+the test task runs `pytest --showlocals` and a key printed into a CI log is a key to rotate.
 
 - *Not mitigated.* No rotation procedure is documented, and no automated secret scanning runs.
 
@@ -349,9 +350,9 @@ The OpenRouter key is kept out of the settings object's generated `repr`, becaus
 
 The system makes one model call per statement, and the checking agent makes tool calls in a loop.
 
-- *Mitigated.* Bounded concurrency (5 for the classifier, 8 for the checker), a 240-second
-  per-statement timeout that cancels the check, a bounded retry count, a tool-call budget of 10 per
-  statement, and a 100 000-character ceiling on page content reaching the model.
+- *Mitigated.* Bounded concurrency in both stages, a per-statement timeout that cancels the check, a
+  bounded retry count, a per-statement tool-call budget, and a ceiling on page content reaching the
+  model. Each stage's README gives the default that applies while each is unset.
 - *Not mitigated.* No cap on total spend per run, no budget alerting, and no rate-limit-aware
   backpressure beyond per-call retry with backoff.
 

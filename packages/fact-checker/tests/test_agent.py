@@ -1,12 +1,13 @@
 """One statement's checking loop: the budget it spends and the ruling it returns."""
 
+import asyncio
 import logging
 from functools import partial
 
 import openai
 import pytest
 from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessage
-from langchain_core.tools import tool
+from langchain_core.tools import ToolException, tool
 
 from fact_checker import agent
 from fact_checker.agent import (
@@ -31,8 +32,11 @@ from tests.conftest import (
     BRIGHT_DATA_ENDPOINT,
     FakeCheckingModel,
     FakeRulingModel,
+    FakeTool,
     FakeToolkit,
+    SharedFlightTool,
     a_blob_whose_repr_is,
+    always,
     make_config,
     openai_status_error,
     quoting_the_tokened_url,
@@ -468,6 +472,55 @@ async def test_a_failure_before_any_tool_call_carries_a_spend_of_zero() -> None:
         )
 
     assert raised.value.tool_calls_used == 0
+
+
+async def test_two_statements_sharing_a_failed_fetch_each_carry_their_own_spend() -> (
+    None
+):
+    """One flight, one exception, and two statements that spent different amounts."""
+    cache = RunCache()
+    toolkit = Toolkit(
+        [
+            SharedFlightTool(SEARCH_ENGINE, cache, ToolException("the server said no")),
+            FakeTool(SCRAPE_AS_MARKDOWN, always("# A page")),
+        ],
+        make_config(),
+        cache,
+    )
+    waiting = asyncio.create_task(
+        check_one(
+            A_STATEMENT,
+            "s1",
+            toolkit=toolkit,
+            checking_model=FakeCheckingModel([a_turn(a_search_call())]),
+            ruling_model=FakeRulingModel([]),
+            budget=10,
+        )
+    )
+    await asyncio.sleep(0)
+    joining = asyncio.create_task(
+        check_one(
+            A_STATEMENT,
+            "s2",
+            toolkit=toolkit,
+            checking_model=FakeCheckingModel(
+                [a_turn(a_scrape_call(), a_search_call())]
+            ),
+            ruling_model=FakeRulingModel([]),
+            budget=10,
+        )
+    )
+
+    outcomes = await asyncio.gather(waiting, joining, return_exceptions=True)
+
+    failures = [
+        outcome for outcome in outcomes if isinstance(outcome, StatementFailure)
+    ]
+    assert len(failures) == 2
+    assert [failure.tool_calls_used for failure in failures] == [0, 1]
+    assert all(failure.code is ErrorCode.TOOL_ERROR for failure in failures)
+    assert all("the server said no" in failure.message for failure in failures)
+    assert all(isinstance(failure.__cause__, ToolException) for failure in failures)
 
 
 async def test_a_reported_failure_never_carries_the_bright_data_token() -> None:

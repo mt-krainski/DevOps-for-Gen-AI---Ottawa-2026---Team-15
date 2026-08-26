@@ -150,9 +150,9 @@ Both keys null therefore means "skipped", never "something went wrong quietly".
 `meta` describes the run, not the statement. `counts` reports `total`, `checked`, `skipped` and
 `failed`, and `usage` reports the tokens both models consumed plus `searches`.
 
-**`searches` counts attempts, not distinct queries.** Every search invocation that reached Bright
-Data increments it, so a search retried after a transient failure counts each attempt. A search
-answered from the run's cache counts none.
+**`searches` counts attempts, not distinct queries.** Every search invocation the run made
+increments it, so a search retried after a transient failure counts each attempt. A search answered
+from the run's cache counts none.
 
 `meta` carries no cost estimate: published prices go stale, and a stale number is worse than none.
 
@@ -263,12 +263,11 @@ uv run poe test-integration
 
 ### The LLM quality suite
 
-Verdict quality is measured separately, by a promptfoo suite of about twenty cases in
-`promptfoo/`, spread across the four verdicts and including opinions that must pass through
-unchecked. It is wired to nothing and is run by hand when a prompt changes. Every fact case spends a
-real OpenRouter key and a real Bright Data token. An opinion case spends no tokens and no searches,
-because the agent never runs for one. Both variables still have to be set for every case: each run
-calls Bright Data before it checks anything.
+Verdict quality is measured separately, by a promptfoo suite in `promptfoo/`, spread across the four
+verdicts and including opinions that must pass through unchecked. It is wired to nothing and is run
+by hand when a prompt changes. Every fact case spends a real OpenRouter key and a real Bright Data
+token. An opinion case spends no tokens and no searches, because the agent never runs for one. Both
+variables still have to be set for every case: each run calls Bright Data before it checks anything.
 
 promptfoo needs Node 22.22.0 or newer. Run it from `packages/fact-checker/`:
 

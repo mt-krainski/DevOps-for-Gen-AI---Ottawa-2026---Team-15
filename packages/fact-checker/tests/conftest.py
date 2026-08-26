@@ -100,6 +100,32 @@ class FakeTool:
         return outcome
 
 
+JOIN_ATTEMPTS = 100
+
+
+class SharedFlightTool:
+    """A tool whose one flight fails only once a second caller has joined it.
+
+    The cache hands a failed flight's exception to every caller waiting on it.
+    A test about that sharing needs both callers waiting before the flight
+    fails, so this tool holds the failure back until the cache records a hit.
+    """
+
+    def __init__(self, name: str, cache: RunCache, failure: Exception) -> None:
+        """Take the tool's name, the cache to watch, and the failure to raise."""
+        self.name = name
+        self._cache = cache
+        self._failure = failure
+
+    async def ainvoke(self, _arguments: dict[str, Any]) -> str:
+        """Wait for a second caller to join this flight, then fail it for both."""
+        for _ in range(JOIN_ATTEMPTS):
+            if self._cache.hits:
+                raise self._failure
+            await asyncio.sleep(0)
+        raise AssertionError("no second caller ever joined the flight")
+
+
 class FakeMCPClient:
     """Stands in for `MultiServerMCPClient`: one fixed tool list, no session."""
 
@@ -264,12 +290,7 @@ def _a_turn(tokens: tuple[int, int], *, calls: int = 0) -> AIMessage:
 
 @dataclass
 class Plan:
-    """What the two fake models do for the one statement this plan names.
-
-    One plan belongs to one statement, `failure` included: the checking loop
-    stamps the tool calls spent onto the exception it raises, so a `failure`
-    shared between two statements would end up carrying one statement's count.
-    """
+    """What the two fake models do for the one statement this plan names."""
 
     verdict: Verdict = "supported"
     checking_tokens: tuple[int, int] = (0, 0)

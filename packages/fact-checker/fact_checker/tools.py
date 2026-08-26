@@ -5,6 +5,7 @@ import logging
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, Protocol
+from urllib.parse import quote
 
 from langchain_core.tools import BaseTool, ToolException
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -214,6 +215,9 @@ def _cache_key(name: str, arguments: dict[str, Any]) -> str:
 def without_the_token(text: str, token: str) -> str:
     """Return `text` fit to report, with `***` in `token`'s place.
 
+    The token rides in a query string, so an upstream message that quotes a URL
+    can carry it percent-encoded. Both forms are replaced.
+
     Args:
         text: What is about to be reported, logged, or published.
         token: The credential to keep out of it. A blank one is left alone,
@@ -221,11 +225,12 @@ def without_the_token(text: str, token: str) -> str:
             character.
 
     Returns:
-        The same text, with every occurrence of the token replaced.
+        The same text, with every occurrence of the token replaced, written
+        plainly or URL-quoted.
     """
     if not token:
         return text
-    return text.replace(token, "***")
+    return text.replace(token, "***").replace(quote(token, safe=""), "***")
 
 
 def _as_text(returned: object, name: str) -> str:

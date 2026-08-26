@@ -3,6 +3,7 @@
 import json
 import logging
 from contextlib import AbstractAsyncContextManager
+from urllib.parse import quote
 
 import openai
 import pytest
@@ -146,6 +147,25 @@ async def test_a_connection_failures_own_words_never_carry_the_token(
     assert BRIGHT_DATA_CREDENTIAL not in message
     assert f"Client error '{status}' for url" in message
     assert f"{BRIGHT_DATA_ENDPOINT}?token=***" in message
+
+
+async def test_a_url_encoded_token_never_survives_a_message() -> None:
+    """An upstream message can quote the query string percent-encoded."""
+    credential = "bd/needs+encoding=1"
+    encoded = quote(credential, safe="")
+    client = FakeMCPClient(
+        [],
+        failure=RuntimeError(f"cannot POST {BRIGHT_DATA_ENDPOINT}?token={encoded}"),
+    )
+
+    with pytest.raises(CheckError) as raised:
+        async with opening(client, api_token=credential):
+            pass
+
+    message = raised.value.message
+    assert credential not in message
+    assert encoded not in message
+    assert message.count(f"{BRIGHT_DATA_ENDPOINT}?token=***") == 2
 
 
 async def test_a_blank_token_leaves_a_message_as_it_was() -> None:

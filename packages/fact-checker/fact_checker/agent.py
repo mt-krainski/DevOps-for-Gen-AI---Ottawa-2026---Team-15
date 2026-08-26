@@ -203,9 +203,8 @@ async def check_one(
             messages, ruling_model=ruling_model, toolkit=toolkit, tally=tally
         )
     except StatementFailure as failure:
-        failure.tool_calls_used = tally.tool_calls
         _log_failure(identifier, failure, toolkit)
-        raise
+        raise failure.with_calls_spent(tally.tool_calls) from failure.__cause__
     except AuthenticationFailure as failure:
         _log_failure(identifier, failure, toolkit)
         raise

@@ -39,8 +39,8 @@ class StatementFailure(Exception):  # noqa: N818 — see the note above
 
     `tool_calls_used` is what the statement had spent when it failed, which the
     run reports beside the outcome. A site that raises without holding the
-    running count leaves it `None`, and the checking loop fills it in on the way
-    out. `None` therefore means unknown, and never zero.
+    running count leaves it `None`, and the checking loop raises its own copy
+    with the count filled in. `None` therefore means unknown, and never zero.
     """
 
     def __init__(
@@ -51,6 +51,24 @@ class StatementFailure(Exception):  # noqa: N818 — see the note above
         self.code = code
         self.message = message
         self.tool_calls_used = tool_calls_used
+
+    def with_calls_spent(self, tool_calls_used: int) -> "StatementFailure":
+        """Return this failure again as a new instance carrying `tool_calls_used`.
+
+        One failure can belong to several statements: the run's cache fetches
+        shared material once, and hands the failed flight's exception to every
+        statement that waited on it. Writing the count onto that exception would
+        let the statement that wrote last speak for all of them, so each takes a
+        copy of its own. The copy carries the code and the message, and the site
+        that raises it chains it to the same cause.
+
+        Args:
+            tool_calls_used: What this statement had spent when it failed.
+
+        Returns:
+            A failure the calling statement alone holds.
+        """
+        return StatementFailure(self.code, self.message, tool_calls_used)
 
 
 class AuthenticationFailure(Exception):  # noqa: N818 — see the note above

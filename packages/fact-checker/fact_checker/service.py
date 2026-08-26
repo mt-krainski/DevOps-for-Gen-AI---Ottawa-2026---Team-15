@@ -260,8 +260,15 @@ def _entry(
 def _log_outcome(
     identifier: str, outcome: str, *, elapsed: float, tool_calls: int | None
 ) -> None:
-    spent = "an unknown number of" if tool_calls is None else tool_calls
-    logger.info("%s: %s in %.2fs, %s tool calls", identifier, outcome, elapsed, spent)
+    logger.info("%s: %s in %.2fs, %s", identifier, outcome, elapsed, _spent(tool_calls))
+
+
+def _spent(tool_calls: int | None) -> str:
+    if tool_calls is None:
+        return "an unknown number of tool calls"
+    if tool_calls == 1:
+        return "1 tool call"
+    return f"{tool_calls} tool calls"
 
 
 def _assembled(

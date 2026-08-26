@@ -101,10 +101,10 @@ Three cases are distinguishable, and that is deliberate:
 - **Checked.** `ruling` holds the verdict.
 - **Failed.** `error` names what went wrong and `ruling` is null.
 
-`meta` records the run, not the statement. `searches` counts search invocations that reached Bright
-Data, so a search retried after a transient failure counts each attempt and a search answered from
-the run's cache counts none. `meta` carries no cost estimate: published prices go stale, and a stale
-number is worse than none.
+`meta` records the run, not the statement. `searches` counts the search invocations the run made, so
+a search retried after a transient failure counts each attempt and a search answered from the run's
+cache counts none. `meta` carries no cost estimate: published prices go stale, and a stale number is
+worse than none.
 
 ### The four verdicts
 
@@ -251,12 +251,12 @@ verdict at high confidence says the tool is sure the claim cannot be settled thi
   Data. It is marked `integration` and deselected by `poe test`, so the default suite stays offline;
   CI never invokes it. It asserts the shape and the pass-through of an opinion, never which verdict
   came back — pinning a verdict there would make it a quality measure.
-- **LLM quality is measured separately**, by a promptfoo suite of about twenty cases in
-  `promptfoo/`, spread across the four verdicts and including opinions that must pass through
-  unchecked and a claim that cannot be settled from public sources. It runs by hand when a prompt
-  changes and is wired to nothing. Its assertions are deterministic — a JSON Schema over the whole
-  entry, and a JavaScript expression over the verdict — so no grading credential is needed. A case
-  that fails is a finding about the prompt or the model, not a reason to loosen the assertion.
+- **LLM quality is measured separately**, by a promptfoo suite in `promptfoo/`, spread across the
+  four verdicts and including opinions that must pass through unchecked and a claim that cannot be
+  settled from public sources. It runs by hand when a prompt changes and is wired to nothing. Its
+  assertions are deterministic — a JSON Schema over the whole entry, and a JavaScript expression
+  over the verdict — so no grading credential is needed. A case that fails is a finding about the
+  prompt or the model, not a reason to loosen the assertion.
 
 ## Accepted Limitation
 

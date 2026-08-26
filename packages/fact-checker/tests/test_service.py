@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.messages import AIMessage, BaseMessage, ToolCall
+from langchain_core.tools import ToolException
 
 from fact_checker import service
 from fact_checker.cache import RunCache
@@ -20,15 +22,18 @@ from fact_checker.errors import (
 )
 from fact_checker.models import CheckerInput, CheckerOutput
 from fact_checker.service import CheckingRuntime, check_statements
-from fact_checker.tools import Toolkit
+from fact_checker.tools import SCRAPE_AS_MARKDOWN, SEARCH_ENGINE, Toolkit
 from tests.conftest import (
     A_MODEL,
+    FakeTool,
     FakeToolkit,
     Plan,
     Script,
+    SharedFlightTool,
     a_payload,
     a_script,
     a_statement,
+    always,
     make_config,
 )
 
@@ -501,7 +506,7 @@ async def test_the_info_line_reports_the_tool_calls_the_check_spent(
 async def test_a_failed_check_logs_the_tool_calls_it_had_already_spent(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A statement that spends calls and then fails reports what it spent."""
+    """What it spent, in a line whose grammar agrees with the number it reports."""
     caplog.set_level(logging.INFO, logger="fact_checker")
     text = "The claim."
     payload = a_payload(a_statement(text))
@@ -515,7 +520,74 @@ async def test_a_failed_check_logs_the_tool_calls_it_had_already_spent(
 
     line = info_lines(caplog)[0]
     assert line.startswith("s1: failed (TOOL_ERROR) in ")
-    assert line.endswith("1 tool calls")
+    assert line.endswith("1 tool call")
+
+
+def a_call(name: str, arguments: dict[str, str], call_id: str) -> ToolCall:
+    """Build one tool call the way a model asks for it."""
+    return {"name": name, "args": arguments, "id": call_id, "type": "tool_call"}
+
+
+def a_model_asking(turns: Mapping[str, Sequence[ToolCall]]) -> SimpleNamespace:
+    """A checking model giving each statement the one turn its own text names."""
+
+    async def ainvoke(messages: Sequence[BaseMessage]) -> AIMessage:
+        opening = str(messages[1].content)
+        for text, calls in turns.items():
+            if text in opening:
+                return AIMessage(content="", tool_calls=list(calls))
+        raise AssertionError(f"no turn matches the prompt {opening!r}")
+
+    return SimpleNamespace(ainvoke=ainvoke)
+
+
+def a_model_that_must_not_rule() -> SimpleNamespace:
+    """A ruling model for a batch where every statement fails before the ruling."""
+
+    async def ainvoke(_messages: Sequence[BaseMessage]) -> Mapping[str, object]:
+        raise AssertionError("the statement failed, so no ruling was due")
+
+    return SimpleNamespace(ainvoke=ainvoke)
+
+
+async def test_two_statements_sharing_a_failed_fetch_each_log_their_own_spend(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One failed fetch reaches both, and the counts they spent are their own."""
+    caplog.set_level(logging.INFO, logger="fact_checker")
+    waiting, joining = "The waiting claim.", "The joining claim."
+    query, url = "who won", "https://example.test/report"
+    cache = RunCache()
+    toolkit = Toolkit(
+        [
+            SharedFlightTool(SEARCH_ENGINE, cache, ToolException("the server said no")),
+            FakeTool(SCRAPE_AS_MARKDOWN, always("# A page")),
+        ],
+        make_config(),
+        cache,
+    )
+    runtime = CheckingRuntime(
+        toolkit=toolkit,
+        checking_model=a_model_asking(
+            {
+                waiting: [a_call(SEARCH_ENGINE, {"query": query}, "c1")],
+                joining: [
+                    a_call(SCRAPE_AS_MARKDOWN, {"url": url}, "c1"),
+                    a_call(SEARCH_ENGINE, {"query": query}, "c2"),
+                ],
+            }
+        ),
+        ruling_model=a_model_that_must_not_rule(),
+    )
+
+    await check_statements(
+        a_payload(a_statement(waiting), a_statement(joining)),
+        config=make_config(),
+        runtime=runtime,
+    )
+
+    spent = {line.split(":")[0]: line.split(", ")[-1] for line in info_lines(caplog)}
+    assert spent == {"s1": "0 tool calls", "s2": "1 tool call"}
 
 
 async def test_a_timed_out_check_never_claims_a_tool_call_count(
