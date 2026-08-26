@@ -265,8 +265,9 @@ uv run poe test-integration
 
 Verdict quality is measured separately, by a promptfoo suite of about twenty cases in
 `promptfoo/`, spread across the four verdicts and including opinions that must pass through
-unchecked. It is wired to nothing and is run by hand when a prompt changes. Every case spends a real
-OpenRouter key and a real Bright Data token.
+unchecked. It is wired to nothing and is run by hand when a prompt changes. Every fact case spends a
+real OpenRouter key and a real Bright Data token. An opinion case spends neither, because the agent
+never runs for one.
 
 promptfoo needs Node 22.22.0 or newer. Run it from `packages/fact-checker/`:
 

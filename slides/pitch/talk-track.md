@@ -77,16 +77,23 @@ entirely: it is the only slide that says why the product is built this way.
 
 ## If a judge asks
 
-**"What is mocked right now?"** The searching agent. Stage two runs end to end —
-input, timeouts, usage accounting, output — but ships an offline stand-in, so
-every fact returns `unverifiable` and the justification says no search ran. The
-classifier's model calls are real. All of this is in the README's demo notes.
+**"What is mocked right now?"** Not the searching agent. Every factual statement
+gets its own agent run against Bright Data's hosted MCP server, spends a
+tool-call budget searching and scraping pages, and rules on what it read with
+cited references. The classifier is live too. The one stand-in left is the
+display: it renders the true ruling shape from a fixed sample, because the file
+picker is not built. The limitation worth naming instead is the references. They
+are the model's own, and nothing checks an excerpt against the page it came
+from — so a citation is a pointer to follow, not a verified quotation. All of
+this is in the README's demo notes.
 
-**"How do you know it works?"** We do not, in the sense you mean. There is no
-labelled set and no accuracy baseline. We measure cost, throughput and failure
-rate off every run's `meta` block. Building an evaluation harness is the next
-thing after the agent merges, and we would rather say that than show you a number
-we made up.
+**"How do you know it works?"** Not as well as you would like. Stage two ships a
+hand-run quality suite: cases spread across all four verdicts, each held to a
+deterministic assertion — no model grading a model. It catches a prompt
+regression on the claims it covers. What it is not is a labelled set, and there
+is still no accuracy baseline. We measure cost, throughput and failure rate off
+every run's `meta` block, and we would rather tell you that than show you an
+accuracy number we made up.
 
 **"What breaks first at 10x?"** The model gateway. Concurrency is a semaphore in
 one process, so scale means more processes against a shared rate-limit budget we
@@ -97,7 +104,7 @@ between them is a file.
 job carries one — the tests fake the model boundary, so they need no credential.
 Our search provider puts its token inside the URL, which makes the URL itself a
 credential, so it is wrapped in a type that only yields the real URL when a caller
-asks for it by name. Print it or log it and you get `token=REDACTED`.
+asks for it by name. Print it or log it and you get `token=***`.
 
 **"What are the risks of getting this wrong?"** A wrong verdict that someone
 trusts. That is why the output is advisory and terminal — nothing acts on a

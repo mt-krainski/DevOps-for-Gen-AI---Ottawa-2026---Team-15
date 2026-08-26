@@ -4,7 +4,7 @@ Labels each statement `fact` or `opinion` with a confidence score, from one LLM 
 routed through OpenRouter. It is one stage in a larger fact-checking pipeline: it does no web search
 and reaches no verdict on whether a claim is true. `SPEC.md` carries the full design.
 
-Its output is the input the `factchecker` package reads.
+Its output is the input the `fact-checker` package reads.
 
 Two ways to call it:
 

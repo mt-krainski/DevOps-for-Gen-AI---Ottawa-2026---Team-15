@@ -282,8 +282,9 @@ What a run emits today, with no extra instrumentation:
   time, and its outcome.
 - **Stage one writes no log records at all.** It imports `logging` nowhere. Its outcome reaches the
   caller through the exit code, and a failure adds one JSON `{code, message}` object on stderr.
-- **Every log record goes to stderr.** The payload is written only to the output file, so stdout
-  stays clean for a pipe.
+- **Every log record goes to stderr.** Stage two writes the payload only to its `--output` file, so
+  its stdout stays empty. Stage one defaults `--output` to `-`, so the payload goes to stdout — and
+  nothing else does, which keeps the pipe clean.
 - **Stage two logs the reason a run ended at `CRITICAL`**, so no setting of `LOG_LEVEL` can hide why
   a non-zero exit code was returned.
 - **Level control** in stage two by the `LOG_LEVEL` environment variable, defaulting to `INFO`.
