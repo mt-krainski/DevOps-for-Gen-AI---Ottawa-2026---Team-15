@@ -1,8 +1,10 @@
 # The LLM quality suite for this package: about twenty cases, run by hand when
 # a prompt changes. It is wired to nothing. Every fact case spends a real
 # OpenRouter key and a real Bright Data token, both read from the environment
-# the package itself reads. An opinion case spends neither, because the agent
-# never runs for one. The package README carries the invocation.
+# the package itself reads. An opinion case spends no tokens and no searches,
+# because the agent never runs for one, but both variables still have to be
+# set for every case: each run calls Bright Data before it checks anything.
+# The package README carries the invocation.
 description: fact-checker verdict quality
 
 providers:

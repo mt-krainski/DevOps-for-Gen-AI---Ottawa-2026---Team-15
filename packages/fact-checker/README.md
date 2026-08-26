@@ -58,10 +58,10 @@ Both arguments are required, and both take a path. There is no stdin or stdout m
 written only to `--output`. A check is slow and spends real credentials, so its result belongs in a
 file that outlives the run rather than in a stream a caller may lose.
 
-At `INFO` the tool writes one line per statement, naming its id, its outcome, the elapsed time and
-the tool calls it spent. At `DEBUG` it also writes one line per tool call and the traceback behind
-any failure. The reason a run ended is logged at `CRITICAL`, so no level hides why a non-zero exit
-code came back.
+At `INFO` the tool writes one line per statement to stderr, naming its id, its outcome, the elapsed
+time and the tool calls it spent. At `DEBUG` it also writes one line per tool call and the traceback
+behind any failure. The reason a run ended is logged at `CRITICAL`, so no level hides why a non-zero
+exit code came back.
 
 ## Input
 
@@ -266,8 +266,9 @@ uv run poe test-integration
 Verdict quality is measured separately, by a promptfoo suite of about twenty cases in
 `promptfoo/`, spread across the four verdicts and including opinions that must pass through
 unchecked. It is wired to nothing and is run by hand when a prompt changes. Every fact case spends a
-real OpenRouter key and a real Bright Data token. An opinion case spends neither, because the agent
-never runs for one.
+real OpenRouter key and a real Bright Data token. An opinion case spends no tokens and no searches,
+because the agent never runs for one. Both variables still have to be set for every case: each run
+calls Bright Data before it checks anything.
 
 promptfoo needs Node 22.22.0 or newer. Run it from `packages/fact-checker/`:
 
