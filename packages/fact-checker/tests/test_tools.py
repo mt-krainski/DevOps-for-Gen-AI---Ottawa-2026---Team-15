@@ -32,6 +32,7 @@ from tests.conftest import (
     always,
     make_config,
     openai_status_error,
+    quoting_the_tokened_url,
 )
 
 A_URL = "https://example.test/article"
@@ -46,15 +47,6 @@ def opening(
     """Open a toolkit over the fake client, with no connection made."""
     config = make_config(scrape_char_limit=scrape_char_limit, api_token=api_token)
     return open_toolkit(config, RunCache(), client_factory=lambda _url: client)
-
-
-def quoting_the_tokened_url(status: int) -> StatusCodeError:
-    """Return a failure quoting the request URL, the way httpx reports a status."""
-    return StatusCodeError(
-        status,
-        f"Client error '{status}' for url "
-        f"'{BRIGHT_DATA_ENDPOINT}?token={BRIGHT_DATA_CREDENTIAL}'",
-    )
 
 
 def a_blob_whose_repr_is(characters: int) -> dict[str, str]:
@@ -519,3 +511,14 @@ async def test_the_toolkit_binds_the_tool_objects_the_server_gave() -> None:
     async with opening(offering(search, scrape)) as toolkit:
         assert isinstance(toolkit, Toolkit)
         assert toolkit.bound_tools == [search, scrape]
+
+
+async def test_the_scrub_seam_hides_the_token_in_any_message_built_over_it() -> None:
+    """The agent reports failures the toolkit re-raised, and they quote the URL."""
+    search, scrape = both_tools()
+
+    async with opening(offering(search, scrape)) as toolkit:
+        reported = toolkit.without_the_token(str(quoting_the_tokened_url(500)))
+
+    assert BRIGHT_DATA_CREDENTIAL not in reported
+    assert f"{BRIGHT_DATA_ENDPOINT}?token=***" in reported

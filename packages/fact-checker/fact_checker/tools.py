@@ -107,21 +107,35 @@ class Toolkit:
         _log_call(name, arguments, result, cached=not reached_the_server)
         return result
 
+    def without_the_token(self, text: str) -> str:
+        """Return `text` fit to report, with `***` in the token's place.
+
+        A failure this class re-raises untouched quotes the request URL, and the
+        token rides in that URL. The caller that turns such a failure into a
+        message reports it through here.
+
+        Args:
+            text: What is about to be reported, logged, or published.
+
+        Returns:
+            The same text, with every occurrence of the token replaced.
+        """
+        return _without_the_token(text, self._config.bright_data.api_token)
+
     async def _invoke(
         self, tool: BaseTool, name: str, arguments: dict[str, Any]
     ) -> str:
         if name == SEARCH_ENGINE:
             self.searches += 1
-        token = self._config.bright_data.api_token
         try:
             returned = await tool.ainvoke(arguments)
         except ToolException as exc:
-            reported = _without_the_token(str(exc), token)
-            raise StatementFailure(ErrorCode.TOOL_ERROR, reported) from exc
+            raise StatementFailure(
+                ErrorCode.TOOL_ERROR, self.without_the_token(str(exc))
+            ) from exc
         except Exception as exc:
             if is_authentication_failure(exc):
-                rejection = _without_the_token(str(exc), token)
-                raise AuthenticationFailure(rejection) from exc
+                raise AuthenticationFailure(self.without_the_token(str(exc))) from exc
             raise
         text = _as_text(returned, name)
         if name == SCRAPE_AS_MARKDOWN:

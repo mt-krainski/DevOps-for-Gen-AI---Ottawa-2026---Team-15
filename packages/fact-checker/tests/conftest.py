@@ -1,18 +1,21 @@
 """The fakes and the fixtures the test files in this package share."""
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import openai
 import pytest
+from langchain_core.messages import AIMessage, BaseMessage
 
+from fact_checker.cache import RunCache
 from fact_checker.config import (
     DEFAULT_SCRAPE_CHAR_LIMIT,
     BrightDataConfig,
     CheckerConfig,
 )
+from fact_checker.tools import Toolkit
 
 CONFIGURED_VARIABLES = (
     "OPENROUTER_API_KEY",
@@ -142,3 +145,74 @@ def make_config(
         statement_timeout_seconds=240,
         scrape_char_limit=scrape_char_limit,
     )
+
+
+def quoting_the_tokened_url(status: int) -> StatusCodeError:
+    """Return a failure quoting the request URL, the way httpx reports a status."""
+    return StatusCodeError(
+        status,
+        f"Client error '{status}' for url "
+        f"'{BRIGHT_DATA_ENDPOINT}?token={BRIGHT_DATA_CREDENTIAL}'",
+    )
+
+
+def next_answer[T](queue: list[T | BaseException]) -> T:
+    """Take a fake's next queued outcome, raising it where it is an exception."""
+    if not queue:
+        raise AssertionError("the fake was asked for more answers than it holds")
+    outcome = queue.pop(0)
+    if isinstance(outcome, BaseException):
+        raise outcome
+    return outcome
+
+
+class FakeCheckingModel:
+    """Stands in for the tool-bound model, recording every prompt it was given."""
+
+    def __init__(self, answers: Sequence[AIMessage | BaseException]) -> None:
+        """Take the turns to answer with, in order; a queued exception raises."""
+        self.prompts: list[list[BaseMessage]] = []
+        self._answers: list[AIMessage | BaseException] = list(answers)
+
+    async def ainvoke(self, messages: list[BaseMessage]) -> AIMessage:
+        """Record the messages as they stood, then answer from the queue."""
+        self.prompts.append(list(messages))
+        return next_answer(self._answers)
+
+
+class FakeRulingModel:
+    """Stands in for the structured-output model, in its `include_raw` shape."""
+
+    def __init__(self, results: Sequence[Mapping[str, object] | BaseException]) -> None:
+        """Take the results to answer with, in order; a queued exception raises."""
+        self.prompts: list[list[BaseMessage]] = []
+        self._results: list[Mapping[str, object] | BaseException] = list(results)
+
+    async def ainvoke(self, messages: list[BaseMessage]) -> Mapping[str, object]:
+        """Record the messages as they stood, then answer from the queue."""
+        self.prompts.append(list(messages))
+        return next_answer(self._results)
+
+
+class FakeToolkit(Toolkit):
+    """Stands in for the connected toolkit, recording what each tool was asked.
+
+    It answers `call` from a queue and inherits everything else, so the scrub
+    the agent reports failures through is the one that runs in production.
+    """
+
+    def __init__(
+        self,
+        answers: Sequence[str | BaseException],
+        *,
+        config: CheckerConfig | None = None,
+    ) -> None:
+        """Take what the tools return, in the order the agent asks for them."""
+        super().__init__([], config or make_config(), RunCache())
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self._answers: list[str | BaseException] = list(answers)
+
+    async def call(self, name: str, arguments: dict[str, Any]) -> str:
+        """Record the call, then answer from the queue."""
+        self.calls.append((name, arguments))
+        return next_answer(self._answers)
