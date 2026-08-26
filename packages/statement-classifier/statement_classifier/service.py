@@ -11,6 +11,7 @@ from statement_classifier.classifier import (
     classify_one,
 )
 from statement_classifier.config import DEFAULT_CONCURRENCY, load_config
+from statement_classifier.context import windows_for
 from statement_classifier.errors import (
     AuthenticationFailure,
     ClassificationFailure,
@@ -21,16 +22,14 @@ from statement_classifier.models import (
     ClassifiedStatement,
     ClassifierInput,
     ClassifierOutput,
-    ParagraphClassifiedStatement,
-    ParagraphClassifierOutput,
-    ParagraphInput,
     Statement,
     StatementError,
+    TextInput,
 )
 from statement_classifier.segmenter import (
     StructuredSegmenterModel,
     build_segmenter_model,
-    segment_paragraph,
+    segment_text,
 )
 
 
@@ -43,13 +42,13 @@ def _coerce_input(payload: ClassifierInput | dict[str, Any]) -> ClassifierInput:
         raise ClassifierError(ErrorCode.INVALID_INPUT, str(exc)) from exc
 
 
-def _coerce_paragraph_input(
-    payload: ParagraphInput | dict[str, Any],
-) -> ParagraphInput:
-    if isinstance(payload, ParagraphInput):
+def _coerce_text_input(
+    payload: TextInput | dict[str, Any],
+) -> TextInput:
+    if isinstance(payload, TextInput):
         return payload
     try:
-        return ParagraphInput.model_validate(payload)
+        return TextInput.model_validate(payload)
     except ValidationError as exc:
         raise ClassifierError(ErrorCode.INVALID_INPUT, str(exc)) from exc
 
@@ -82,7 +81,7 @@ async def _classify_batch(
 ) -> list[ClassifiedStatement]:
     """Classify every statement concurrently, isolating per-statement failures.
 
-    The shared core of `classify_statements` and `classify_paragraph`: once
+    The shared core of `classify_statements` and `classify_text`: once
     there's a flat list of `Statement`s and a model to call, both do the same
     concurrency-bounded, isolation-and-auth-short-circuit dance.
 
@@ -171,32 +170,33 @@ async def classify_statements(
     return ClassifierOutput(statements=results)
 
 
-async def classify_paragraph(
-    payload: ParagraphInput | dict[str, Any],
+async def classify_text(
+    payload: TextInput | dict[str, Any],
     *,
     concurrency: int = DEFAULT_CONCURRENCY,
     classifier_model: StructuredClassifierModel | None = None,
     segmenter_model: StructuredSegmenterModel | None = None,
-) -> ParagraphClassifierOutput:
-    """Split a paragraph into statements, then classify each concurrently.
+) -> ClassifierOutput:
+    """Split the text into statements, then classify each concurrently.
 
-    Each extracted statement is classified using the whole paragraph as its
-    surrounding context, since that's the only context a paragraph-mode caller
-    supplies. A per-statement classification failure is isolated the same way
-    as in `classify_statements`; a segmentation failure has no per-item
-    granularity to isolate it onto, so it aborts the whole call.
+    Each statement is classified against the sentences around it rather than
+    against the whole input, so an article-length input does not put itself
+    into every classification call. A per-statement classification failure is
+    isolated the same way as in `classify_statements`; a segmentation failure
+    has no per-item granularity to isolate it onto, so it aborts the whole
+    call.
 
     Args:
-        payload: The paragraph, as a `ParagraphInput` or the dict it validates
-            from.
+        payload: The text, as a `TextInput` or the dict it validates from.
         concurrency: The ceiling on classification LLM calls in flight at once.
         classifier_model: The runnable that classifies one statement. `None`
             builds one from the environment.
-        segmenter_model: The runnable that splits the paragraph. `None` builds
-            one from the environment.
+        segmenter_model: The runnable that splits the text. `None` builds one
+            from the environment.
 
     Returns:
-        The statements the paragraph was split into, each carrying a
+        The statements the text was split into, in `classify`'s output shape:
+        each carries the sentences around it as its surrounding context, and a
         classification or an error.
 
     Raises:
@@ -204,7 +204,7 @@ async def classify_paragraph(
             segmentation failed, or the credential is missing or rejected.
             Nothing partial is returned.
     """
-    paragraph_input = _coerce_paragraph_input(payload)
+    text_input = _coerce_text_input(payload)
 
     if concurrency < 1:
         raise ClassifierError(
@@ -218,26 +218,16 @@ async def classify_paragraph(
         if classifier_model is None:
             classifier_model = build_classifier_model(config)
 
-    statement_texts = await segment_paragraph(
-        paragraph_input.paragraph, segmenter_model
-    )
+    statement_texts = await segment_text(text_input.text, segmenter_model)
+    windows = windows_for(text_input.text, statement_texts)
 
     statements = [
-        Statement(surrounding_context=paragraph_input.paragraph, statement=text)
-        for text in statement_texts
+        Statement(surrounding_context=window, statement=statement)
+        for statement, window in zip(statement_texts, windows, strict=True)
     ]
     results = await _classify_batch(statements, classifier_model, concurrency)
 
-    return ParagraphClassifierOutput(
-        statements=[
-            ParagraphClassifiedStatement(
-                statement=result.statement,
-                classification=result.classification,
-                error=result.error,
-            )
-            for result in results
-        ]
-    )
+    return ClassifierOutput(statements=results)
 
 
 def classify_statements_sync(
@@ -261,29 +251,28 @@ def classify_statements_sync(
     )
 
 
-def classify_paragraph_sync(
-    payload: ParagraphInput | dict[str, Any],
+def classify_text_sync(
+    payload: TextInput | dict[str, Any],
     *,
     concurrency: int = DEFAULT_CONCURRENCY,
     classifier_model: StructuredClassifierModel | None = None,
     segmenter_model: StructuredSegmenterModel | None = None,
-) -> ParagraphClassifierOutput:
-    """Classify a paragraph from a caller not already in an async context.
+) -> ClassifierOutput:
+    """Classify a text from a caller not already in an async context.
 
     Args:
-        payload: The paragraph, as a `ParagraphInput` or the dict it validates
-            from.
+        payload: The text, as a `TextInput` or the dict it validates from.
         concurrency: The ceiling on classification LLM calls in flight at once.
         classifier_model: The runnable that classifies one statement. `None`
             builds one from the environment.
-        segmenter_model: The runnable that splits the paragraph. `None` builds
-            one from the environment.
+        segmenter_model: The runnable that splits the text. `None` builds one
+            from the environment.
 
     Returns:
-        Whatever `classify_paragraph` returns for the same arguments.
+        Whatever `classify_text` returns for the same arguments.
     """
     return asyncio.run(
-        classify_paragraph(
+        classify_text(
             payload,
             concurrency=concurrency,
             classifier_model=classifier_model,

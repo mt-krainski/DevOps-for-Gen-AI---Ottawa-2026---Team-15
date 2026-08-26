@@ -11,14 +11,14 @@ from statement_classifier.errors import ClassifierError, ErrorCode
 from statement_classifier.models import Classification, ClassifierInput, Statement
 from statement_classifier.segmenter import _Segments
 from statement_classifier.service import (
-    classify_paragraph,
-    classify_paragraph_sync,
     classify_statements,
     classify_statements_sync,
+    classify_text,
+    classify_text_sync,
 )
 from tests.conftest import FakeModel
 
-PARAGRAPH = (
+TEXT = (
     "Carney confirmed he was adding tariffs that would add costs for Canadians, "
     "but insisted they were necessary to retaliate against Trump's levies"
 )
@@ -221,7 +221,7 @@ async def test_concurrency_is_bounded_by_semaphore() -> None:
     assert max_observed <= concurrency_limit
 
 
-async def test_paragraph_splits_and_classifies_fact_then_opinion() -> None:
+async def test_text_splits_and_classifies_fact_then_opinion() -> None:
     """The example from the spec: a fact clause, then an opinion clause."""
     segmenter_model = FakeModel([_Segments(statements=[FIRST_CLAUSE, SECOND_CLAUSE])])
     classifier_model = FakeModel(
@@ -231,8 +231,8 @@ async def test_paragraph_splits_and_classifies_fact_then_opinion() -> None:
         ]
     )
 
-    output = await classify_paragraph(
-        {"paragraph": PARAGRAPH},
+    output = await classify_text(
+        {"text": TEXT},
         classifier_model=classifier_model,
         segmenter_model=segmenter_model,
     )
@@ -242,33 +242,34 @@ async def test_paragraph_splits_and_classifies_fact_then_opinion() -> None:
     assert output.statements[1].classification.class_ == "opinion"
 
 
-async def test_paragraph_output_omits_surrounding_context() -> None:
-    """The wire shape carries `statement`, `classification`, `error` only."""
+async def test_short_text_gives_every_statement_the_whole_text() -> None:
+    """Under a window's width there is nothing to trim, so nothing is."""
     segmenter_model = FakeModel([_Segments(statements=[FIRST_CLAUSE])])
     classifier_model = FakeModel(
         [Classification(**{"class": "fact", "confidence": 0.95})]
     )
 
-    output = await classify_paragraph(
-        {"paragraph": PARAGRAPH},
+    output = await classify_text(
+        {"text": TEXT},
         classifier_model=classifier_model,
         segmenter_model=segmenter_model,
     )
 
     assert json.loads(output.model_dump_json())["statements"][0] == {
+        "surroundingContext": TEXT,
         "statement": FIRST_CLAUSE,
         "classification": {"class": "fact", "confidence": 0.95},
         "error": None,
     }
 
 
-async def test_paragraph_with_no_statements_returns_empty_result() -> None:
-    """A paragraph the segmenter finds nothing splittable in makes no calls."""
+async def test_text_with_no_statements_returns_empty_result() -> None:
+    """Text the segmenter finds nothing splittable in makes no calls."""
     segmenter_model = FakeModel([_Segments(statements=[])])
     classifier_model = FakeModel([])
 
-    output = await classify_paragraph(
-        {"paragraph": PARAGRAPH},
+    output = await classify_text(
+        {"text": TEXT},
         classifier_model=classifier_model,
         segmenter_model=segmenter_model,
     )
@@ -278,13 +279,13 @@ async def test_paragraph_with_no_statements_returns_empty_result() -> None:
 
 
 async def test_segmentation_failure_aborts_before_any_classification_call() -> None:
-    """A paragraph that can't be split never reaches the classifier."""
+    """Text that can't be split never reaches the classifier."""
     segmenter_model = FakeModel([RuntimeError("boom")] * 3)
     classifier_model = FakeModel([])
 
     with pytest.raises(ClassifierError) as exc_info:
-        await classify_paragraph(
-            {"paragraph": PARAGRAPH},
+        await classify_text(
+            {"text": TEXT},
             classifier_model=classifier_model,
             segmenter_model=segmenter_model,
         )
@@ -293,14 +294,14 @@ async def test_segmentation_failure_aborts_before_any_classification_call() -> N
     assert classifier_model.calls == []
 
 
-async def test_empty_paragraph_raises_invalid_input_before_any_llm_call() -> None:
-    """A whitespace-only paragraph is rejected before segmentation is attempted."""
+async def test_empty_text_raises_invalid_input_before_any_llm_call() -> None:
+    """Whitespace-only text is rejected before segmentation is attempted."""
     segmenter_model = FakeModel([])
     classifier_model = FakeModel([])
 
     with pytest.raises(ClassifierError) as exc_info:
-        await classify_paragraph(
-            {"paragraph": "   "},
+        await classify_text(
+            {"text": "   "},
             classifier_model=classifier_model,
             segmenter_model=segmenter_model,
         )
@@ -310,7 +311,7 @@ async def test_empty_paragraph_raises_invalid_input_before_any_llm_call() -> Non
     assert classifier_model.calls == []
 
 
-async def test_paragraph_one_failing_statement_does_not_affect_siblings() -> None:
+async def test_text_one_failing_statement_does_not_affect_siblings() -> None:
     """A classification failure is isolated onto that statement, as in batch mode."""
     segmenter_model = FakeModel([_Segments(statements=[FIRST_CLAUSE, SECOND_CLAUSE])])
     classifier_model = FakeModel(
@@ -322,8 +323,8 @@ async def test_paragraph_one_failing_statement_does_not_affect_siblings() -> Non
         ]
     )
 
-    output = await classify_paragraph(
-        {"paragraph": PARAGRAPH},
+    output = await classify_text(
+        {"text": TEXT},
         classifier_model=classifier_model,
         segmenter_model=segmenter_model,
         concurrency=1,
@@ -332,18 +333,19 @@ async def test_paragraph_one_failing_statement_does_not_affect_siblings() -> Non
     failed, succeeded = output.statements
     assert failed.classification is None
     assert failed.error.code == ErrorCode.LLM_ERROR
+    assert failed.surrounding_context == TEXT
     assert succeeded.classification.class_ == "opinion"
     assert succeeded.error is None
 
 
-async def test_paragraph_concurrency_below_one_raises_invalid_input() -> None:
+async def test_text_concurrency_below_one_raises_invalid_input() -> None:
     """A concurrency that admits no calls is rejected as bad input."""
     segmenter_model = FakeModel([])
     classifier_model = FakeModel([])
 
     with pytest.raises(ClassifierError) as exc_info:
-        await classify_paragraph(
-            {"paragraph": PARAGRAPH},
+        await classify_text(
+            {"text": TEXT},
             classifier_model=classifier_model,
             segmenter_model=segmenter_model,
             concurrency=0,
@@ -353,29 +355,78 @@ async def test_paragraph_concurrency_below_one_raises_invalid_input() -> None:
     assert segmenter_model.calls == []
 
 
-async def test_paragraph_missing_api_key_raises_before_llm_calls(
+async def test_text_missing_api_key_raises_before_llm_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With no model overrides, config loading fails fast on the missing key."""
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
     with pytest.raises(ClassifierError) as exc_info:
-        await classify_paragraph({"paragraph": PARAGRAPH})
+        await classify_text({"text": TEXT})
 
     assert exc_info.value.code == ErrorCode.MISSING_API_KEY
 
 
-def test_paragraph_sync_wrapper_returns_same_result_as_async() -> None:
+def test_text_sync_wrapper_returns_same_result_as_async() -> None:
     """The sync wrapper answers with what the async call would have answered."""
     segmenter_model = FakeModel([_Segments(statements=[FIRST_CLAUSE])])
     classifier_model = FakeModel(
         [Classification(**{"class": "fact", "confidence": 0.9})]
     )
 
-    output = classify_paragraph_sync(
-        {"paragraph": PARAGRAPH},
+    output = classify_text_sync(
+        {"text": TEXT},
         classifier_model=classifier_model,
         segmenter_model=segmenter_model,
     )
 
     assert output.statements[0].classification.class_ == "fact"
+
+
+LONG_TEXT = " ".join(f"Sentence {i} stands here." for i in range(1, 41))
+
+
+async def test_long_text_gives_each_statement_its_own_window() -> None:
+    """An article-length input is not echoed whole onto every statement."""
+    segmenter_model = FakeModel(
+        [_Segments(statements=["Sentence 3 stands here.", "Sentence 38 stands here."])]
+    )
+    classifier_model = FakeModel(
+        [
+            Classification(**{"class": "fact", "confidence": 0.9}),
+            Classification(**{"class": "fact", "confidence": 0.9}),
+        ]
+    )
+
+    output = await classify_text(
+        {"text": LONG_TEXT},
+        classifier_model=classifier_model,
+        segmenter_model=segmenter_model,
+        concurrency=1,
+    )
+
+    early, late = output.statements
+    assert early.surrounding_context != LONG_TEXT
+    assert "Sentence 1 stands here." in early.surrounding_context
+    assert "Sentence 38 stands here." not in early.surrounding_context
+    assert "Sentence 40 stands here." in late.surrounding_context
+    assert "Sentence 3 stands here." not in late.surrounding_context
+
+
+async def test_the_classification_call_gets_the_window_it_reports() -> None:
+    """One value: the context a statement is classified against is the one echoed."""
+    segmenter_model = FakeModel([_Segments(statements=["Sentence 20 stands here."])])
+    classifier_model = FakeModel(
+        [Classification(**{"class": "fact", "confidence": 0.9})]
+    )
+
+    output = await classify_text(
+        {"text": LONG_TEXT},
+        classifier_model=classifier_model,
+        segmenter_model=segmenter_model,
+    )
+
+    reported = output.statements[0].surrounding_context
+    prompt = classifier_model.calls[0]
+    assert reported in prompt
+    assert LONG_TEXT not in prompt

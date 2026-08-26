@@ -1053,6 +1053,7 @@ dependencies = [
     { name = "langchain-openai" },
     { name = "openai" },
     { name = "pydantic" },
+    { name = "syntok" },
 ]
 
 [package.dev-dependencies]
@@ -1071,6 +1072,7 @@ requires-dist = [
     { name = "langchain-openai", specifier = ">=0.2,<2.0.0" },
     { name = "openai", specifier = ">=1.0,<3.0.0" },
     { name = "pydantic", specifier = ">=2.11,<3.0.0" },
+    { name = "syntok", specifier = ">=1.4.4" },
 ]
 
 [package.metadata.requires-dev]
@@ -1081,6 +1083,17 @@ dev = [
     { name = "pytest", specifier = ">=9.1.1,<10.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.0.0,<2.0.0" },
     { name = "ruff", specifier = ">=0.15.22,<0.16.0" },
+]
+
+[[package]]
+name = "syntok"
+version = "1.4.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "regex" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/47/0d/e9700408c99275692c57ac786edfbede03cf2a9818bd3ecbc4cbf21a4448/syntok-1.4.4-py3-none-any.whl", hash = "sha256:263546bea559cb693bc23dc436307a44e17a242bb9f2a8c5e39eb86906aaf831", size = 24548, upload-time = "2022-03-12T18:06:11.254Z" },
 ]
 
 [[package]]
