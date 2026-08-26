@@ -1,5 +1,6 @@
 """The Bright Data connection, the two tools, and the layers wrapped round a call."""
 
+import json
 import logging
 from contextlib import AbstractAsyncContextManager
 
@@ -15,6 +16,7 @@ from fact_checker.errors import (
     StatementFailure,
 )
 from fact_checker.tools import (
+    MAX_REPR_CHARACTERS,
     SCRAPE_AS_MARKDOWN,
     SEARCH_ENGINE,
     Toolkit,
@@ -23,6 +25,7 @@ from fact_checker.tools import (
 )
 from tests.conftest import (
     BRIGHT_DATA_CREDENTIAL,
+    BRIGHT_DATA_ENDPOINT,
     FakeMCPClient,
     FakeTool,
     StatusCodeError,
@@ -35,11 +38,28 @@ A_URL = "https://example.test/article"
 
 
 def opening(
-    client: FakeMCPClient, *, scrape_char_limit: int = 100000
+    client: FakeMCPClient,
+    *,
+    scrape_char_limit: int = 100000,
+    api_token: str = BRIGHT_DATA_CREDENTIAL,
 ) -> AbstractAsyncContextManager[Toolkit]:
     """Open a toolkit over the fake client, with no connection made."""
-    config = make_config(scrape_char_limit=scrape_char_limit)
+    config = make_config(scrape_char_limit=scrape_char_limit, api_token=api_token)
     return open_toolkit(config, RunCache(), client_factory=lambda _url: client)
+
+
+def quoting_the_tokened_url(status: int) -> StatusCodeError:
+    """Return a failure quoting the request URL, the way httpx reports a status."""
+    return StatusCodeError(
+        status,
+        f"Client error '{status}' for url "
+        f"'{BRIGHT_DATA_ENDPOINT}?token={BRIGHT_DATA_CREDENTIAL}'",
+    )
+
+
+def a_blob_whose_repr_is(characters: int) -> dict[str, str]:
+    """Return a result with no text to read, of exactly the `repr` size asked."""
+    return {"data": "A" * (characters - len(repr({"data": ""})))}
 
 
 def offering(*tools: FakeTool) -> FakeMCPClient:
@@ -109,6 +129,46 @@ async def test_a_rejected_token_at_connect_time_is_an_auth_error() -> None:
             pass
 
     assert raised.value.code is ErrorCode.AUTH_ERROR
+
+
+async def test_a_wrapped_rejection_at_connect_time_is_still_an_auth_error() -> None:
+    """The MCP stack runs on task groups, so a 401 can arrive inside a group."""
+    wrapped = ExceptionGroup("unhandled errors in a TaskGroup", [StatusCodeError(401)])
+    client = FakeMCPClient([], failure=wrapped)
+
+    with pytest.raises(CheckError) as raised:
+        async with opening(client):
+            pass
+
+    assert raised.value.code is ErrorCode.AUTH_ERROR
+
+
+@pytest.mark.parametrize("status", [401, 500], ids=["rejected", "server-error"])
+async def test_a_connection_failures_own_words_never_carry_the_token(
+    status: int,
+) -> None:
+    """The transport quotes the whole request URL, and the token rides in it."""
+    client = FakeMCPClient([], failure=quoting_the_tokened_url(status))
+
+    with pytest.raises(CheckError) as raised:
+        async with opening(client):
+            pass
+
+    message = raised.value.message
+    assert BRIGHT_DATA_CREDENTIAL not in message
+    assert f"Client error '{status}' for url" in message
+    assert f"{BRIGHT_DATA_ENDPOINT}?token=***" in message
+
+
+async def test_a_blank_token_leaves_a_message_as_it_was() -> None:
+    """Replacing an empty string would put `***` between every character."""
+    client = FakeMCPClient([], failure=RuntimeError("connection refused"))
+
+    with pytest.raises(CheckError) as raised:
+        async with opening(client, api_token=""):
+            pass
+
+    assert raised.value.message.endswith(": connection refused")
 
 
 async def test_the_real_client_refuses_to_swallow_a_reported_tool_failure() -> None:
@@ -237,6 +297,36 @@ async def test_a_rejection_at_call_time_becomes_this_packages_own_failure(
     assert len(search.calls) == 1
 
 
+async def test_a_rejection_at_call_times_own_words_never_carry_the_token() -> None:
+    """This message reaches the operator's terminal, so the token cannot be in it."""
+    search = FakeTool(SEARCH_ENGINE, always(quoting_the_tokened_url(401)))
+    scrape = FakeTool(SCRAPE_AS_MARKDOWN, always("# A page"))
+
+    async with opening(offering(search, scrape)) as toolkit:
+        with pytest.raises(AuthenticationFailure) as raised:
+            await toolkit.call(SEARCH_ENGINE, {"query": "who"})
+
+    assert BRIGHT_DATA_CREDENTIAL not in raised.value.message
+    assert "Client error '401' for url" in raised.value.message
+    assert f"{BRIGHT_DATA_ENDPOINT}?token=***" in raised.value.message
+
+
+async def test_a_reported_tool_failures_own_words_never_carry_the_token() -> None:
+    """This message lands in the statement's `error` field, which the run prints."""
+    tokened = f"{BRIGHT_DATA_ENDPOINT}?token={BRIGHT_DATA_CREDENTIAL}"
+    reported = ToolException(f"upstream said no to {tokened}")
+    search = FakeTool(SEARCH_ENGINE, always(reported))
+    scrape = FakeTool(SCRAPE_AS_MARKDOWN, always("# A page"))
+
+    async with opening(offering(search, scrape)) as toolkit:
+        with pytest.raises(StatementFailure) as raised:
+            await toolkit.call(SEARCH_ENGINE, {"query": "who"})
+
+    redacted = f"{BRIGHT_DATA_ENDPOINT}?token=***"
+    assert BRIGHT_DATA_CREDENTIAL not in raised.value.message
+    assert raised.value.message == f"upstream said no to {redacted}"
+
+
 async def test_a_reported_tool_failure_is_neither_retried_nor_cached() -> None:
     """The server said no to these arguments; a later statement may still ask."""
     outcomes: list[object] = [ToolException("the target site refused"), "results"]
@@ -311,6 +401,36 @@ async def test_a_result_with_no_text_is_a_tool_failure(returned: object) -> None
     assert raised.value.code is ErrorCode.TOOL_ERROR
 
 
+async def test_a_result_at_the_repr_ceiling_is_shown_whole() -> None:
+    """The ceiling is a ceiling, not a threshold, so nothing is cut here."""
+    returned = a_blob_whose_repr_is(MAX_REPR_CHARACTERS)
+    search = FakeTool(SEARCH_ENGINE, always(returned))
+    scrape = FakeTool(SCRAPE_AS_MARKDOWN, always("# A page"))
+
+    async with opening(offering(search, scrape)) as toolkit:
+        with pytest.raises(StatementFailure) as raised:
+            await toolkit.call(SEARCH_ENGINE, {"query": "who"})
+
+    assert repr(returned) in raised.value.message
+    assert "..." not in raised.value.message
+
+
+async def test_a_result_over_the_repr_ceiling_is_cut_and_marked() -> None:
+    """A base64 image block would otherwise land whole in a statement's error."""
+    returned = a_blob_whose_repr_is(MAX_REPR_CHARACTERS + 1)
+    search = FakeTool(SEARCH_ENGINE, always(returned))
+    scrape = FakeTool(SCRAPE_AS_MARKDOWN, always("# A page"))
+
+    async with opening(offering(search, scrape)) as toolkit:
+        with pytest.raises(StatementFailure) as raised:
+            await toolkit.call(SEARCH_ENGINE, {"query": "who"})
+
+    message = raised.value.message
+    assert repr(returned) not in message
+    assert message.endswith("...")
+    assert repr(returned)[:MAX_REPR_CHARACTERS] in message
+
+
 async def test_a_search_result_is_logged_by_its_entry_count(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -350,6 +470,29 @@ async def test_a_cache_hit_says_so_in_the_log(
         await toolkit.call(SEARCH_ENGINE, {"query": "who"})
 
     assert sum("cache hit" in record.getMessage() for record in caplog.records) == 1
+
+
+async def test_a_result_is_not_parsed_when_debug_is_off(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sizing a result parses it, and a run above DEBUG never reads that size."""
+    caplog.set_level(logging.INFO)
+    parsed: list[str] = []
+    real_loads = json.loads
+
+    def counting_loads(text: str) -> object:
+        parsed.append(text)
+        return real_loads(text)
+
+    monkeypatch.setattr(json, "loads", counting_loads)
+    search = FakeTool(SEARCH_ENGINE, always('[{"url": "a"}]'))
+    scrape = FakeTool(SCRAPE_AS_MARKDOWN, always("# A page"))
+
+    async with opening(offering(search, scrape)) as toolkit:
+        await toolkit.call(SEARCH_ENGINE, {"query": "who"})
+        await toolkit.call(SEARCH_ENGINE, {"query": "who"})
+
+    assert parsed == []
 
 
 async def test_no_log_record_carries_the_bright_data_token(

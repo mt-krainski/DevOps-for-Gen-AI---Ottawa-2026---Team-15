@@ -38,9 +38,9 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
 class StatusCodeError(Exception):
     """An error that reports its HTTP status the way most SDK errors do."""
 
-    def __init__(self, status_code: int) -> None:
+    def __init__(self, status_code: int, message: str | None = None) -> None:
         """Carry the status under the `status_code` attribute."""
-        super().__init__(f"HTTP {status_code}")
+        super().__init__(message or f"HTTP {status_code}")
         self.status_code = status_code
 
 
@@ -124,14 +124,18 @@ BRIGHT_DATA_CREDENTIAL = "bd-must-never-be-logged"
 BRIGHT_DATA_ENDPOINT = "https://mcp.brightdata.invalid/mcp"
 
 
-def make_config(*, scrape_char_limit: int = DEFAULT_SCRAPE_CHAR_LIMIT) -> CheckerConfig:
+def make_config(
+    *,
+    scrape_char_limit: int = DEFAULT_SCRAPE_CHAR_LIMIT,
+    api_token: str = BRIGHT_DATA_CREDENTIAL,
+) -> CheckerConfig:
     """Build one run's configuration without reading the environment."""
     return CheckerConfig(
         api_key="sk-openrouter-fake",
         model="google/gemma-4-31b-it",
         base_url="https://openrouter.invalid/api/v1",
         bright_data=BrightDataConfig(
-            api_token=BRIGHT_DATA_CREDENTIAL, base_endpoint=BRIGHT_DATA_ENDPOINT
+            api_token=api_token, base_endpoint=BRIGHT_DATA_ENDPOINT
         ),
         concurrency=8,
         tool_call_budget=10,

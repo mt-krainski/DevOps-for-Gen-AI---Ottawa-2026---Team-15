@@ -44,12 +44,18 @@ def _status_of(exc: BaseException) -> int | None:
 def is_authentication_failure(exc: BaseException) -> bool:
     """Report whether a credential was rejected, so the run has to end.
 
+    The MCP client stack runs on task groups, so a rejection can reach here
+    wrapped in an `ExceptionGroup`, at any depth.
+
     Args:
         exc: The failure to classify.
 
     Returns:
-        True where the provider rejected the credential rather than the request.
+        True where the provider rejected the credential rather than the request,
+        or where any failure a group holds was such a rejection.
     """
+    if isinstance(exc, BaseExceptionGroup):
+        return any(is_authentication_failure(held) for held in exc.exceptions)
     if isinstance(exc, _REJECTION_TYPES):
         return True
     return _status_of(exc) in _REJECTION_STATUSES
@@ -62,12 +68,15 @@ def is_transient(exc: BaseException) -> bool:
         exc: The failure to classify.
 
     Returns:
-        True for a rate limit, a server-side error, or a broken connection. A
-        rejected credential is never transient: waiting does not make a rejected
-        key valid.
+        True for a rate limit, a server-side error, or a broken connection,
+        held directly or inside a group at any depth. A rejected credential is
+        never transient: waiting does not make a rejected key valid, and a group
+        holding one is not transient either.
     """
     if is_authentication_failure(exc):
         return False
+    if isinstance(exc, BaseExceptionGroup):
+        return any(is_transient(held) for held in exc.exceptions)
     if isinstance(exc, _TRANSIENT_TYPES):
         return True
     status = _status_of(exc)

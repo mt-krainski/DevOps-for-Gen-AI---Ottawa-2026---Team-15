@@ -23,6 +23,11 @@ SEARCH_ENGINE = "search_engine"
 SCRAPE_AS_MARKDOWN = "scrape_as_markdown"
 SELECTED_TOOL_NAMES = (SEARCH_ENGINE, SCRAPE_AS_MARKDOWN)
 
+# What a tool returned is shown in the failure saying it held no text, and that
+# message becomes the statement's published `error`. A content-block list can
+# carry base64 image data, so the whole blob cannot go in it.
+MAX_REPR_CHARACTERS = 300
+
 _SERVER_NAME = "brightdata"
 _TARGET_ARGUMENT = {SEARCH_ENGINE: "query", SCRAPE_AS_MARKDOWN: "url"}
 
@@ -107,13 +112,16 @@ class Toolkit:
     ) -> str:
         if name == SEARCH_ENGINE:
             self.searches += 1
+        token = self._config.bright_data.api_token
         try:
             returned = await tool.ainvoke(arguments)
         except ToolException as exc:
-            raise StatementFailure(ErrorCode.TOOL_ERROR, str(exc)) from exc
+            reported = _without_the_token(str(exc), token)
+            raise StatementFailure(ErrorCode.TOOL_ERROR, reported) from exc
         except Exception as exc:
             if is_authentication_failure(exc):
-                raise AuthenticationFailure(str(exc)) from exc
+                rejection = _without_the_token(str(exc), token)
+                raise AuthenticationFailure(rejection) from exc
             raise
         text = _as_text(returned, name)
         if name == SCRAPE_AS_MARKDOWN:
@@ -159,8 +167,11 @@ async def open_toolkit(
         )
         raise CheckError(
             code,
-            f"could not load the tools at "
-            f"{config.bright_data.redacted_endpoint_url()}: {exc}",
+            _without_the_token(
+                f"could not load the tools at "
+                f"{config.bright_data.redacted_endpoint_url()}: {exc}",
+                config.bright_data.api_token,
+            ),
         ) from exc
     yield Toolkit(_select(offered), config, cache)
 
@@ -190,6 +201,15 @@ def _cache_key(name: str, arguments: dict[str, Any]) -> str:
     return f"scrape:{url}"
 
 
+def _without_the_token(text: str, token: str) -> str:
+    # An upstream failure quotes the request URL it was given, and the Bright
+    # Data token rides in that URL's query string. A blank token is left alone,
+    # because replacing an empty string would match between every character.
+    if not token:
+        return text
+    return text.replace(token, "***")
+
+
 def _as_text(returned: object, name: str) -> str:
     if isinstance(returned, str):
         return returned
@@ -203,13 +223,23 @@ def _as_text(returned: object, name: str) -> str:
             return text
     raise StatementFailure(
         ErrorCode.TOOL_ERROR,
-        f"{name} returned no text to read: {type(returned).__name__} {returned!r}",
+        f"{name} returned no text to read: {type(returned).__name__} "
+        f"{_bounded_repr(returned)}",
     )
+
+
+def _bounded_repr(returned: object) -> str:
+    shown = repr(returned)
+    if len(shown) <= MAX_REPR_CHARACTERS:
+        return shown
+    return f"{shown[:MAX_REPR_CHARACTERS]}..."
 
 
 def _log_call(
     name: str, arguments: dict[str, Any], result: str, *, cached: bool
 ) -> None:
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
     target = arguments.get(_TARGET_ARGUMENT[name])
     if cached:
         logger.debug("cache hit: %s %r returned %s", name, target, _size_of(result))
