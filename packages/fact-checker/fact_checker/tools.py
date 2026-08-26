@@ -16,17 +16,13 @@ from fact_checker.errors import (
     CheckError,
     ErrorCode,
     StatementFailure,
+    bounded_repr,
 )
 from fact_checker.retry import is_authentication_failure, with_retry
 
 SEARCH_ENGINE = "search_engine"
 SCRAPE_AS_MARKDOWN = "scrape_as_markdown"
 SELECTED_TOOL_NAMES = (SEARCH_ENGINE, SCRAPE_AS_MARKDOWN)
-
-# What a tool returned is shown in the failure saying it held no text, and that
-# message becomes the statement's published `error`. A content-block list can
-# carry base64 image data, so the whole blob cannot go in it.
-MAX_REPR_CHARACTERS = 300
 
 _SERVER_NAME = "brightdata"
 _TARGET_ARGUMENT = {SEARCH_ENGINE: "query", SCRAPE_AS_MARKDOWN: "url"}
@@ -238,15 +234,8 @@ def _as_text(returned: object, name: str) -> str:
     raise StatementFailure(
         ErrorCode.TOOL_ERROR,
         f"{name} returned no text to read: {type(returned).__name__} "
-        f"{_bounded_repr(returned)}",
+        f"{bounded_repr(returned)}",
     )
-
-
-def _bounded_repr(returned: object) -> str:
-    shown = repr(returned)
-    if len(shown) <= MAX_REPR_CHARACTERS:
-        return shown
-    return f"{shown[:MAX_REPR_CHARACTERS]}..."
 
 
 def _log_call(

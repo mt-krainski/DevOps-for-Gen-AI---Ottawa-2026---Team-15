@@ -18,7 +18,12 @@ from langchain_core.messages import (
 from langchain_openai import ChatOpenAI
 
 from fact_checker.config import CheckerConfig
-from fact_checker.errors import AuthenticationFailure, ErrorCode, StatementFailure
+from fact_checker.errors import (
+    AuthenticationFailure,
+    ErrorCode,
+    StatementFailure,
+    bounded_repr,
+)
 from fact_checker.models import InputStatement, Ruling
 from fact_checker.retry import is_authentication_failure, with_retry
 from fact_checker.tools import Toolkit
@@ -292,7 +297,7 @@ async def _rule(
         raise StatementFailure(
             ErrorCode.PARSE_ERROR,
             f"the ruling came back as {type(parsed).__name__}, "
-            f"not a ruling: {parsed!r}",
+            f"not a ruling: {bounded_repr(parsed)}",
         )
     return parsed
 

@@ -114,6 +114,11 @@ class FakeMCPClient:
         return list(self._tools)
 
 
+def a_blob_whose_repr_is(characters: int) -> dict[str, str]:
+    """Return an object with no text to read, of exactly the `repr` size asked."""
+    return {"data": "A" * (characters - len(repr({"data": ""})))}
+
+
 def always(value: object) -> Callable[[dict[str, Any]], object]:
     """Return a `FakeTool` responder giving the same outcome every time."""
 

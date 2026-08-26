@@ -17,7 +17,12 @@ from fact_checker.agent import (
     check_one,
 )
 from fact_checker.cache import RunCache
-from fact_checker.errors import AuthenticationFailure, ErrorCode, StatementFailure
+from fact_checker.errors import (
+    MAX_REPR_CHARACTERS,
+    AuthenticationFailure,
+    ErrorCode,
+    StatementFailure,
+)
 from fact_checker.models import Classification, InputStatement, Reference, Ruling
 from fact_checker.retry import with_retry
 from fact_checker.tools import SCRAPE_AS_MARKDOWN, SEARCH_ENGINE, Toolkit
@@ -27,6 +32,7 @@ from tests.conftest import (
     FakeCheckingModel,
     FakeRulingModel,
     FakeToolkit,
+    a_blob_whose_repr_is,
     make_config,
     openai_status_error,
     quoting_the_tokened_url,
@@ -359,6 +365,44 @@ async def test_a_ruling_that_is_not_a_ruling_fails_the_statement() -> None:
     assert "dict" in raised.value.message
 
 
+async def test_a_non_ruling_at_the_repr_ceiling_is_shown_whole() -> None:
+    """The ceiling is a ceiling, not a threshold, so nothing is cut here."""
+    parsed = a_blob_whose_repr_is(MAX_REPR_CHARACTERS)
+    toolkit = FakeToolkit([])
+    checking_model = FakeCheckingModel([a_turn()])
+    ruling_model = FakeRulingModel(
+        [{"raw": a_turn(), "parsed": parsed, "parsing_error": None}]
+    )
+
+    with pytest.raises(StatementFailure) as raised:
+        await run_check(
+            toolkit=toolkit, checking_model=checking_model, ruling_model=ruling_model
+        )
+
+    assert repr(parsed) in raised.value.message
+    assert "..." not in raised.value.message
+
+
+async def test_a_non_ruling_over_the_repr_ceiling_is_cut_and_marked() -> None:
+    """A model that answered with a whole page would otherwise land in the error."""
+    parsed = a_blob_whose_repr_is(MAX_REPR_CHARACTERS + 1)
+    toolkit = FakeToolkit([])
+    checking_model = FakeCheckingModel([a_turn()])
+    ruling_model = FakeRulingModel(
+        [{"raw": a_turn(), "parsed": parsed, "parsing_error": None}]
+    )
+
+    with pytest.raises(StatementFailure) as raised:
+        await run_check(
+            toolkit=toolkit, checking_model=checking_model, ruling_model=ruling_model
+        )
+
+    message = raised.value.message
+    assert repr(parsed) not in message
+    assert message.endswith("...")
+    assert repr(parsed)[:MAX_REPR_CHARACTERS] in message
+
+
 async def test_a_failure_that_outlived_the_retries_fails_the_statement() -> None:
     """One statement fails and the run carries on with the other forty-nine."""
     toolkit = FakeToolkit([])
@@ -449,6 +493,9 @@ def a_toolkit_over_real_tools() -> Toolkit:
     return Toolkit([search_engine, scrape_as_markdown], make_config(), RunCache())
 
 
+# The two tests below read langchain's private attributes on a bound runnable.
+# Nothing public reports what a runnable was bound with. A break here under the
+# version pin therefore says the internals moved, not that this package regressed.
 def test_the_checking_model_is_the_configured_model_with_both_tools_bound() -> None:
     """The model can only ask for a tool it was told about."""
     config = make_config()

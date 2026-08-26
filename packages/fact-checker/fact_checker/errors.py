@@ -1,6 +1,11 @@
-"""The failures this package raises."""
+"""The failures this package raises, and the bound on what a message quotes."""
 
 from enum import StrEnum
+
+# A failure message quotes what came back, and that message becomes the
+# statement's published `error`. What came back can be a base64 image block or a
+# whole page, so it is cut to this many characters first.
+MAX_REPR_CHARACTERS = 300
 
 
 class ErrorCode(StrEnum):
@@ -47,3 +52,11 @@ class AuthenticationFailure(Exception):  # noqa: N818 — see the note above
         super().__init__(message)
         self.code = ErrorCode.AUTH_ERROR
         self.message = message
+
+
+def bounded_repr(value: object) -> str:
+    """Return `value`'s `repr`, cut to `MAX_REPR_CHARACTERS` and marked where cut."""
+    shown = repr(value)
+    if len(shown) <= MAX_REPR_CHARACTERS:
+        return shown
+    return f"{shown[:MAX_REPR_CHARACTERS]}..."

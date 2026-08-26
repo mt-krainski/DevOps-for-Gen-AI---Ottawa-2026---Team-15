@@ -10,13 +10,13 @@ from langchain_core.tools import ToolException
 
 from fact_checker.cache import RunCache
 from fact_checker.errors import (
+    MAX_REPR_CHARACTERS,
     AuthenticationFailure,
     CheckError,
     ErrorCode,
     StatementFailure,
 )
 from fact_checker.tools import (
-    MAX_REPR_CHARACTERS,
     SCRAPE_AS_MARKDOWN,
     SEARCH_ENGINE,
     Toolkit,
@@ -29,6 +29,7 @@ from tests.conftest import (
     FakeMCPClient,
     FakeTool,
     StatusCodeError,
+    a_blob_whose_repr_is,
     always,
     make_config,
     openai_status_error,
@@ -47,11 +48,6 @@ def opening(
     """Open a toolkit over the fake client, with no connection made."""
     config = make_config(scrape_char_limit=scrape_char_limit, api_token=api_token)
     return open_toolkit(config, RunCache(), client_factory=lambda _url: client)
-
-
-def a_blob_whose_repr_is(characters: int) -> dict[str, str]:
-    """Return a result with no text to read, of exactly the `repr` size asked."""
-    return {"data": "A" * (characters - len(repr({"data": ""})))}
 
 
 def offering(*tools: FakeTool) -> FakeMCPClient:
