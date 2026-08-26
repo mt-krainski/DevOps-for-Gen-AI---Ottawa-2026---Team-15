@@ -1,6 +1,8 @@
 """The fakes and the fixtures the test files in this package share."""
 
+import asyncio
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
@@ -15,7 +17,8 @@ from fact_checker.config import (
     BrightDataConfig,
     CheckerConfig,
 )
-from fact_checker.tools import Toolkit
+from fact_checker.models import Reference, Ruling, Verdict
+from fact_checker.tools import SEARCH_ENGINE, Toolkit
 
 CONFIGURED_VARIABLES = (
     "OPENROUTER_API_KEY",
@@ -130,24 +133,29 @@ def always(value: object) -> Callable[[dict[str, Any]], object]:
 
 BRIGHT_DATA_CREDENTIAL = "bd-must-never-be-logged"
 BRIGHT_DATA_ENDPOINT = "https://mcp.brightdata.invalid/mcp"
+OPENROUTER_CREDENTIAL = "sk-openrouter-must-never-be-logged"
+A_MODEL = "google/gemma-4-31b-it"
 
 
 def make_config(
     *,
     scrape_char_limit: int = DEFAULT_SCRAPE_CHAR_LIMIT,
     api_token: str = BRIGHT_DATA_CREDENTIAL,
+    concurrency: int = 8,
+    tool_call_budget: int = 10,
+    statement_timeout_seconds: int = 240,
 ) -> CheckerConfig:
     """Build one run's configuration without reading the environment."""
     return CheckerConfig(
-        api_key="sk-openrouter-fake",
-        model="google/gemma-4-31b-it",
+        api_key=OPENROUTER_CREDENTIAL,
+        model=A_MODEL,
         base_url="https://openrouter.invalid/api/v1",
         bright_data=BrightDataConfig(
             api_token=api_token, base_endpoint=BRIGHT_DATA_ENDPOINT
         ),
-        concurrency=8,
-        tool_call_budget=10,
-        statement_timeout_seconds=240,
+        concurrency=concurrency,
+        tool_call_budget=tool_call_budget,
+        statement_timeout_seconds=statement_timeout_seconds,
         scrape_char_limit=scrape_char_limit,
     )
 
@@ -197,6 +205,139 @@ class FakeRulingModel:
         """Record the messages as they stood, then answer from the queue."""
         self.prompts.append(list(messages))
         return next_answer(self._results)
+
+
+def a_statement(
+    text: str,
+    *,
+    identifier: str | None = None,
+    kind: str = "fact",
+    confidence: float = 0.9,
+) -> dict[str, object]:
+    """Build one input statement in the shape it arrives on the wire."""
+    return {
+        "id": identifier,
+        "surroundingContext": f"The document said this among other things: {text}",
+        "statement": text,
+        "classification": {"class": kind, "confidence": confidence},
+    }
+
+
+def a_payload(*statements: dict[str, object]) -> dict[str, object]:
+    """Wrap statements in the envelope the entry point validates."""
+    return {"statements": list(statements)}
+
+
+def _a_ruling(verdict: Verdict) -> Ruling:
+    """Build the ruling one statement's run comes back with."""
+    return Ruling(
+        verdict=verdict,
+        confidence=0.8,
+        justification="Two independent reports agree [1].",
+        references=[
+            Reference(id="1", source="https://example.test/a", excerpt="They agree.")
+        ],
+    )
+
+
+def _a_turn(tokens: tuple[int, int], *, calls: int = 0) -> AIMessage:
+    """Build a model answer asking for `calls` searches, with its usage."""
+    prompt_tokens, completion_tokens = tokens
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": SEARCH_ENGINE,
+                "args": {"query": f"a query {number}"},
+                "id": f"c{number}",
+                "type": "tool_call",
+            }
+            for number in range(calls)
+        ],
+        usage_metadata={
+            "input_tokens": prompt_tokens,
+            "output_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    )
+
+
+@dataclass
+class Plan:
+    """What the two fake models do for the one statement this plan names."""
+
+    verdict: Verdict = "supported"
+    checking_tokens: tuple[int, int] = (0, 0)
+    ruling_tokens: tuple[int, int] = (0, 0)
+    yields: int = 0
+    tool_calls: int = 0
+    failure: BaseException | None = None
+    hangs: bool = False
+
+
+@dataclass
+class Script:
+    """The two fake models for a batch, answering by the statement in the prompt.
+
+    `check_one` writes the statement into its opening prompt, so a fake reading
+    that prompt can give each statement in one batch its own answer without
+    depending on the order the runs happen to reach it.
+    """
+
+    plans: Mapping[str, Plan]
+    in_flight: int = 0
+    peak: int = 0
+    finished: list[str] = field(default_factory=list)
+    turns: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def checking_model(self) -> SimpleNamespace:
+        """The tool-bound model `check_one` asks for its next turn."""
+        return SimpleNamespace(ainvoke=self._check)
+
+    @property
+    def ruling_model(self) -> SimpleNamespace:
+        """The structured-output model `check_one` asks for the ruling."""
+        return SimpleNamespace(ainvoke=self._rule)
+
+    def _plan_for(self, messages: Sequence[BaseMessage]) -> tuple[str, Plan]:
+        opening = str(messages[1].content)
+        for text, plan in self.plans.items():
+            if text in opening:
+                return text, plan
+        raise AssertionError(f"no plan matches the prompt {opening!r}")
+
+    async def _check(self, messages: Sequence[BaseMessage]) -> AIMessage:
+        text, plan = self._plan_for(messages)
+        turn = self.turns.get(text, 0)
+        self.turns[text] = turn + 1
+        self.in_flight += 1
+        self.peak = max(self.peak, self.in_flight)
+        try:
+            for _ in range(plan.yields):
+                await asyncio.sleep(0)
+            if plan.hangs:
+                await asyncio.Event().wait()
+            if plan.failure is not None:
+                raise plan.failure
+            asked = plan.tool_calls if turn == 0 else 0
+            return _a_turn(plan.checking_tokens, calls=asked)
+        finally:
+            self.in_flight -= 1
+
+    async def _rule(self, messages: Sequence[BaseMessage]) -> Mapping[str, object]:
+        text, plan = self._plan_for(messages)
+        self.finished.append(text)
+        return {
+            "raw": _a_turn(plan.ruling_tokens),
+            "parsed": _a_ruling(plan.verdict),
+            "parsing_error": None,
+        }
+
+
+def a_script(*texts: str, **plans: Plan) -> Script:
+    """Build a script: a default plan for each text, overridden by keyword."""
+    return Script(plans={text: plans.get(text, Plan()) for text in texts})
 
 
 class FakeToolkit(Toolkit):

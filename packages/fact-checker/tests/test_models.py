@@ -215,6 +215,11 @@ def test_the_package_root_re_exports_the_public_surface() -> None:
     missing = [name for name in fact_checker.__all__ if not hasattr(fact_checker, name)]
 
     assert missing == []
-    assert {"CheckerInput", "CheckerOutput", "CheckError", "load_config"} <= set(
-        fact_checker.__all__
-    )
+    assert {
+        "CheckerInput",
+        "CheckerOutput",
+        "CheckError",
+        "ErrorCode",
+        "check_statements",
+        "load_config",
+    } <= set(fact_checker.__all__)

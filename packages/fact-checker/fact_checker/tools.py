@@ -104,7 +104,7 @@ class Toolkit:
         return result
 
     def without_the_token(self, text: str) -> str:
-        """Return `text` fit to report, with `***` in the token's place.
+        """Return `text` fit to report, with `***` in this run's token's place.
 
         A failure this class re-raises untouched quotes the request URL, and the
         token rides in that URL. The caller that turns such a failure into a
@@ -116,7 +116,7 @@ class Toolkit:
         Returns:
             The same text, with every occurrence of the token replaced.
         """
-        return _without_the_token(text, self._config.bright_data.api_token)
+        return without_the_token(text, self._config.bright_data.api_token)
 
     async def _invoke(
         self, tool: BaseTool, name: str, arguments: dict[str, Any]
@@ -177,7 +177,7 @@ async def open_toolkit(
         )
         raise CheckError(
             code,
-            _without_the_token(
+            without_the_token(
                 f"could not load the tools at "
                 f"{config.bright_data.redacted_endpoint_url()}: {exc}",
                 config.bright_data.api_token,
@@ -211,10 +211,18 @@ def _cache_key(name: str, arguments: dict[str, Any]) -> str:
     return f"scrape:{url}"
 
 
-def _without_the_token(text: str, token: str) -> str:
-    # An upstream failure quotes the request URL it was given, and the Bright
-    # Data token rides in that URL's query string. A blank token is left alone,
-    # because replacing an empty string would match between every character.
+def without_the_token(text: str, token: str) -> str:
+    """Return `text` fit to report, with `***` in `token`'s place.
+
+    Args:
+        text: What is about to be reported, logged, or published.
+        token: The credential to keep out of it. A blank one is left alone,
+            because replacing an empty string would match between every
+            character.
+
+    Returns:
+        The same text, with every occurrence of the token replaced.
+    """
     if not token:
         return text
     return text.replace(token, "***")

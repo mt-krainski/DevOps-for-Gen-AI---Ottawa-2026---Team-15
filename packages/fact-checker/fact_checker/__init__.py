@@ -22,6 +22,7 @@ from fact_checker.models import (
     assign_identifiers,
     format_timestamp,
 )
+from fact_checker.service import check_statements
 
 __all__ = [
     "AuthenticationFailure",
@@ -44,6 +45,7 @@ __all__ = [
     "Usage",
     "Verdict",
     "assign_identifiers",
+    "check_statements",
     "format_timestamp",
     "load_config",
 ]
