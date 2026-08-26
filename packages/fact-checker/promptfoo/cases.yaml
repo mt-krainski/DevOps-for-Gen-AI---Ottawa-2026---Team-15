@@ -1,0 +1,261 @@
+# Twenty cases, spread across the four verdicts, plus two opinions that must
+# pass through unchecked. Each `assert` here is the case's own expectation; the
+# wire-contract assertion every case also carries lives in the config's
+# `defaultTest`.
+#
+# A case that fails on the model's judgement is a finding about the prompt or
+# the model. It is not a reason to loosen the assertion.
+
+# --- supported: the evidence backs the claim ------------------------------
+
+- description: Water's boiling point at one atmosphere
+  vars:
+    statement: Water boils at 100 degrees Celsius at one atmosphere of pressure.
+    surroundingContext: >-
+      The chapter opened on the physics of everyday cooking, starting with the
+      kettle.
+    class: fact
+    confidence: 0.95
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'supported'
+
+- description: Where the Eiffel Tower stands
+  vars:
+    statement: The Eiffel Tower stands in Paris.
+    surroundingContext: >-
+      The itinerary gave the group two days in France before the train on to
+      Brussels.
+    class: fact
+    confidence: 0.9
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'supported'
+
+- description: The highest mountain above sea level
+  vars:
+    statement: Mount Everest is the highest mountain on Earth above sea level.
+    surroundingContext: >-
+      The article compared the great ranges by the measure climbers use, height
+      above sea level rather than height from base to summit.
+    class: fact
+    confidence: 0.92
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'supported'
+
+- description: The year the Berlin Wall fell
+  vars:
+    statement: The Berlin Wall fell in 1989.
+    surroundingContext: >-
+      The essay traced Europe's borders through the second half of the
+      twentieth century.
+    class: fact
+    confidence: 0.9
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'supported'
+
+- description: Where the Great Barrier Reef lies
+  vars:
+    statement: The Great Barrier Reef lies off the coast of Queensland, Australia.
+    surroundingContext: >-
+      The report surveyed the reef systems most exposed to warming seas.
+    class: fact
+    confidence: 0.88
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'supported'
+
+- description: Who created Python
+  vars:
+    statement: Guido van Rossum created the Python programming language.
+    surroundingContext: >-
+      The history section introduced the languages the team's own tooling is
+      written in.
+    class: fact
+    confidence: 0.9
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'supported'
+
+# --- refuted: the evidence contradicts the claim --------------------------
+
+- description: The Great Wall seen from the Moon
+  vars:
+    statement: The Great Wall of China is visible to the naked eye from the Moon.
+    surroundingContext: >-
+      The piece collected the claims about human structures that travel best
+      and hold up worst.
+    class: fact
+    confidence: 0.7
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'refuted'
+
+- description: The ten percent of the brain claim
+  vars:
+    statement: Humans use only ten percent of their brains.
+    surroundingContext: >-
+      The talk was about what popular science gets wrong when it reports on
+      neurology.
+    class: fact
+    confidence: 0.75
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'refuted'
+
+- description: Lightning striking twice
+  vars:
+    statement: Lightning never strikes the same place twice.
+    surroundingContext: >-
+      The safety leaflet listed the sayings people repeat to each other during
+      a storm.
+    class: fact
+    confidence: 0.7
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'refuted'
+
+- description: A goldfish's memory
+  vars:
+    statement: A goldfish has a memory span of three seconds.
+    surroundingContext: >-
+      The aquarium's guide addressed what visitors believe about the fish they
+      keep at home.
+    class: fact
+    confidence: 0.72
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'refuted'
+
+- description: Kilimanjaro called the highest mountain
+  vars:
+    statement: Mount Kilimanjaro is the highest mountain on Earth.
+    surroundingContext: >-
+      The guidebook ranked the peaks its readers were most likely to attempt
+      without technical climbing.
+    class: fact
+    confidence: 0.65
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'refuted'
+
+# --- mixed: partly right, or the sources disagree -------------------------
+
+- description: Coffee and the heart
+  vars:
+    statement: Drinking coffee is bad for your heart.
+    surroundingContext: >-
+      The health column weighed the studies on daily coffee drinking against
+      each other.
+    class: fact
+    confidence: 0.6
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'mixed'
+
+- description: The Model T's colours
+  vars:
+    statement: >-
+      The Ford Model T was sold in only one colour for the whole of its
+      production.
+    surroundingContext: >-
+      The exhibition told the story of mass production through a single car.
+    class: fact
+    confidence: 0.65
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'mixed'
+
+- description: Why chameleons change colour
+  vars:
+    statement: Chameleons change colour to blend into their surroundings.
+    surroundingContext: >-
+      The nature programme explained what the animals' colour changes are
+      actually for.
+    class: fact
+    confidence: 0.68
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'mixed'
+
+- description: Carrots and eyesight
+  vars:
+    statement: Eating carrots improves your eyesight.
+    surroundingContext: >-
+      The nutrition piece sorted wartime advice from what the evidence
+      supports today.
+    class: fact
+    confidence: 0.62
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'mixed'
+
+# --- unverifiable: the search ran and settled nothing ---------------------
+
+- description: A private detail no source records
+  vars:
+    statement: >-
+      The author drank exactly three cups of coffee while writing the second
+      chapter.
+    surroundingContext: >-
+      The acknowledgements described the conditions the book was written
+      under.
+    class: fact
+    confidence: 0.8
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'unverifiable'
+
+- description: A street-level observation no source records
+  vars:
+    statement: >-
+      A red bicycle was left unlocked outside the third house on Marlowe
+      Street last Tuesday.
+    surroundingContext: >-
+      The neighbourhood newsletter carried a note about bicycles going missing
+      from front gardens.
+    class: fact
+    confidence: 0.75
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'unverifiable'
+
+- description: A preference no survey measured
+  vars:
+    statement: >-
+      Most of Ottawa's municipal staff preferred rye bread to sourdough in
+      March 2019.
+    surroundingContext: >-
+      The office newsletter looked back at the catering choices of a few years
+      ago.
+    class: fact
+    confidence: 0.7
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling?.verdict === 'unverifiable'
+
+# --- opinion: never checked, and both fields stay null --------------------
+
+- description: An opinion about cooking passes through unchecked
+  vars:
+    statement: Boiling water is the most satisfying way to cook pasta.
+    surroundingContext: >-
+      The chapter closed on the author's own preferences in the kitchen.
+    class: opinion
+    confidence: 0.9
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling === null && JSON.parse(output).error === null
+
+- description: An aesthetic judgement passes through unchecked
+  vars:
+    statement: The Eiffel Tower is the most beautiful building in Europe.
+    surroundingContext: >-
+      The travel diary ended with the writer's favourite sights of the trip.
+    class: opinion
+    confidence: 0.85
+  assert:
+    - type: javascript
+      value: JSON.parse(output).ruling === null && JSON.parse(output).error === null

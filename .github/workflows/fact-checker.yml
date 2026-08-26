@@ -1,0 +1,47 @@
+name: fact-checker
+
+# The path filter keeps this package's checks independent of every other package
+# in the monorepo: a teammate's change never queues, or fails, this job.
+on:
+  pull_request:
+    paths:
+      - "packages/fact-checker/**"
+      - ".github/workflows/fact-checker.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: packages/fact-checker
+
+# The package calls a model and a hosted MCP server at run time, but every test
+# drives both through fakes, and the one credentialed test is deselected by the
+# test task. No step below needs an `env` or a `secrets` block, and none should
+# acquire one: a live call in CI would make the checks depend on two upstream
+# services.
+jobs:
+  checks:
+    name: Lint and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: packages/fact-checker/uv.lock
+
+      # uv reads `.python-version` from this package and fetches that
+      # interpreter itself, so no separate action provisions one.
+      - name: Sync the package
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run poe lint
+
+      - name: Test
+        run: uv run poe test

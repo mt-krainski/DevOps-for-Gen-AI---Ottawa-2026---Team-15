@@ -264,7 +264,12 @@ def _a_turn(tokens: tuple[int, int], *, calls: int = 0) -> AIMessage:
 
 @dataclass
 class Plan:
-    """What the two fake models do for the one statement this plan names."""
+    """What the two fake models do for the one statement this plan names.
+
+    One plan belongs to one statement, `failure` included: the checking loop
+    stamps the tool calls spent onto the exception it raises, so a `failure`
+    shared between two statements would end up carrying one statement's count.
+    """
 
     verdict: Verdict = "supported"
     checking_tokens: tuple[int, int] = (0, 0)

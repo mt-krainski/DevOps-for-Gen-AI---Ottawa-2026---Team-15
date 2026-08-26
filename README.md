@@ -62,9 +62,11 @@ checked, skipped and failed, and the prompt tokens, completion tokens and search
 statement gets a log line naming its elapsed time and outcome. That gives cost per run, throughput,
 and failure rate directly from a normal run, with nothing extra to instrument.
 
-**What we have not measured.** Classification accuracy and verdict accuracy. There is no labelled
-set, no evaluation harness, and therefore no baseline. We can tell you what a run cost and how long
-it took. We cannot yet tell you how often it was right, and we will not imply otherwise.
+**What we have not measured.** Classification accuracy and verdict accuracy. Stage two carries a
+hand-run suite of about twenty cases with the verdict each one should reach, which catches a prompt
+regression on those twenty. That is not a labelled set big enough for an accuracy baseline, and
+nothing measures the classifier at all. We can tell you what a run cost and how long it took. We
+cannot yet tell you how often it was right, and we will not imply otherwise.
 
 ## Architecture
 
@@ -73,7 +75,7 @@ flowchart LR
     A["statements.json<br/><i>statement + surroundingContext</i>"]
       --> B["<b>statement-classifier</b><br/>fact or opinion, with confidence"]
     B --> C["classified.json<br/><i>+ classification</i>"]
-    C --> D["<b>factchecker</b><br/>check facts against the web"]
+    C --> D["<b>fact-checker</b><br/>check facts against the web"]
     D --> E["rulings.json<br/><i>+ ruling + error + meta</i>"]
     E --> F["<b>display</b><br/>claims beside their evidence"]
 ```
@@ -84,7 +86,7 @@ process, no shared state.
 | Stage | What it does | Boundary it does not cross |
 | ----- | ------------ | -------------------------- |
 | `statement-classifier` | Labels each statement `fact` or `opinion` with a confidence, one model call per statement, through OpenRouter. | No web search. No ruling on whether anything is true. |
-| `factchecker` | Checks each `fact` against the web and returns a verdict with references. Opinions pass through untouched. | No extraction, no classification. It trusts the label it is given. |
+| `fact-checker` | Checks each `fact` against the web and returns a verdict with references. Opinions pass through untouched. | No extraction, no classification. It trusts the label it is given. |
 | `display` | Reads a rulings file the user picks and lays each claim out beside its evidence. | No calling of either stage. It reads a finished file. |
 
 **Why three programs and not one.** The contract is the only coupling, so each stage can be
@@ -95,8 +97,9 @@ checks.
 
 Both Python packages publish their full contract in their own README:
 [`packages/statement-classifier/README.md`](packages/statement-classifier/README.md) and
-[`packages/factchecker/README.md`](packages/factchecker/README.md). The classifier's design record
-is in [`packages/statement-classifier/SPEC.md`](packages/statement-classifier/SPEC.md).
+[`packages/fact-checker/README.md`](packages/fact-checker/README.md). Each keeps its design record
+beside it, in [`packages/statement-classifier/SPEC.md`](packages/statement-classifier/SPEC.md) and
+[`packages/fact-checker/SPEC.md`](packages/fact-checker/SPEC.md).
 
 ### The four verdicts
 
@@ -116,7 +119,7 @@ way.
 
 ```
 packages/statement-classifier/   stage one — Python, uv, own CI job
-packages/factchecker/            stage two — Python, uv, own CI job
+packages/fact-checker/           stage two — Python, uv, own CI job
 frontend/                        stage three — React, TypeScript, Vite
 design-system/                   design tokens, guideline cards, brand rules
 slides/pitch/                    the three-minute pitch deck and its talk track
@@ -130,8 +133,9 @@ slides/pitch/                    the three-minute pitch deck and its talk track
 - [uv](https://docs.astral.sh/uv/) for the Python packages. Each package pins its own interpreter in
   `.python-version`, and uv fetches it.
 - Node 20 or newer for the frontend.
-- An [OpenRouter](https://openrouter.ai/) API key, and only if you want live classification. Every
-  test runs without one.
+- An [OpenRouter](https://openrouter.ai/) API key, and a [Bright Data](https://brightdata.com/) API
+  token for stage two. Stage one runs live on the key alone; stage two needs both. Every test runs
+  without either.
 
 ### Configure
 
@@ -139,12 +143,15 @@ Configuration is environment variables only. Nothing reads a credential from a f
 repository, and no credential is ever committed.
 
 ```bash
-export OPENROUTER_API_KEY=...          # required for live classification
+export OPENROUTER_API_KEY=...          # required by both stages
+export BRIGHTDATA_API_TOKEN=...        # required by stage two
 export OPENROUTER_MODEL=...            # optional; defaults per package
 ```
 
-`packages/factchecker/.env.example` documents the checking agent's settings, with every value left
+`packages/fact-checker/.env.example` names every setting stage two reads, with every value left
 blank. Copy it to `.env`, which `.gitignore` excludes.
+[`packages/fact-checker/README.md`](packages/fact-checker/README.md) gives the default that applies
+while each is unset.
 
 ### Run stage one — classify
 
@@ -161,13 +168,15 @@ pipe. `--concurrency` caps the model calls in flight and defaults to 5.
 ### Run stage two — check
 
 ```bash
-cd packages/factchecker
+cd packages/fact-checker
 uv sync --locked
-uv run factchecker --input classified.json --output rulings.json
+uv run fact-checker --input classified.json --output rulings.json
 ```
 
-This runs with no credential and needs none: the build ships an offline stand-in for the checking
-agent. See [Demo notes](#demo-notes--what-is-real-and-what-is-not).
+This one searches the web, so it needs both credentials: `OPENROUTER_API_KEY` for the agent and
+`BRIGHTDATA_API_TOKEN` for the search and fetch tools. Without either it exits `3` and checks
+nothing. Both paths are required — there is no stdin or stdout mode, because the payload must not
+share stdout with a log line.
 
 ### Run stage three — display
 
@@ -183,12 +192,12 @@ Each stage distinguishes "the batch failed" from "an item inside it failed". A p
 reported inside the payload and leaves the exit code at zero, so a caller that cares must read the
 `error` field.
 
-| Code | `statement-classifier` | `factchecker` |
-| ---- | ---------------------- | ------------- |
+| Code | `statement-classifier` | `fact-checker` |
+| ---- | ---------------------- | -------------- |
 | `0` | The batch succeeded. Items may still carry errors. | A payload was written. Statements may still carry errors. |
 | `1` | The input could not be read, or the output written. | An unexpected crash. |
 | `2` | The input is not valid JSON, or does not match the shape. | The input could not be read, or failed the contract. |
-| `3` | The credential is missing or was rejected. | A credential was rejected. |
+| `3` | The credential is missing or was rejected. | A credential was never set, or was rejected. |
 | `4` | — | The payload was built and could not be written. |
 
 On a non-zero exit each writes one JSON error object to stderr.
@@ -197,10 +206,9 @@ On a non-zero exit each writes one JSON error object to stderr.
 
 | Symptom | Cause | What to do |
 | ------- | ----- | ---------- |
-| Exit `3` from either stage | `OPENROUTER_API_KEY` is unset or rejected | Export the key. The classifier checks it before any model call. |
-| Exit `2` from `factchecker` naming a repeated id | Two statements share an `id`, assigned or supplied | Identifiers must be unique across the payload. Drop the supplied one or renumber. |
-| Every fact returns `unverifiable` with `"meta.model": "offline"` | Expected. No checking agent is configured | Nothing is wrong. See [Demo notes](#demo-notes--what-is-real-and-what-is-not). |
-| A statement returns a `timeout` error | The check passed the per-statement limit | Raise `FACTCHECKER_STATEMENT_TIMEOUT_SECONDS`, or accept the result. The rest of the batch is unaffected. |
+| Exit `3` from either stage | `OPENROUTER_API_KEY`, or stage two's `BRIGHTDATA_API_TOKEN`, is unset or rejected | Export the credential. Each stage checks its own before any model call. A blank value in `.env` counts as unset. |
+| Exit `2` from `fact-checker` naming a repeated id | Two statements share an `id`, assigned or supplied | Identifiers must be unique across the payload. Drop the supplied one or renumber. |
+| A statement returns a `timeout` error | The check passed the per-statement limit | Raise `FACT_CHECKER_STATEMENT_TIMEOUT_SECONDS`, or accept the result. The rest of the batch is unaffected. |
 
 ## Demo notes — what is real and what is not
 
@@ -209,30 +217,33 @@ Handbook item P-15 asks for mocked components to be identified plainly. These ar
 | Component | State |
 | --------- | ----- |
 | `statement-classifier` | **Live.** Real model calls through OpenRouter, structured output, per-statement error isolation. |
-| `factchecker` contract, orchestration, CLI | **Live.** Runs end to end: reads input, assigns ids, enforces timeouts, aggregates usage, writes the payload. |
-| `factchecker` checking agent | **Stand-in.** This build ships `OfflineChecker`. Nothing searches. Every factual statement returns `unverifiable`, the justification says no search ran, no reference is cited, and `meta.model` reads `offline`. A real agent — the settings loader and a redacting search endpoint — exists on the `task/factchecker-agent` branch and has not merged. |
+| `fact-checker` contract, orchestration, CLI | **Live.** Runs end to end: reads input, assigns ids, enforces timeouts, aggregates usage, writes the payload. |
+| `fact-checker` checking agent | **Live.** It searches. Each factual statement gets its own agent run against Bright Data's hosted MCP server, spending up to ten search and fetch calls, and rules on what it read with cited sources. References are the model's own and are not checked against the retrieved text — see [Known limitations](#known-limitations). |
 | `display` | **Partly live.** It renders the real ruling shape, from a fixed sample rather than a file the user picks. The file picker is not built. |
 | Extraction of statements from a document | **Does not exist.** Statements arrive already split out, each with its surrounding context. |
 
 ## Testing evidence
 
-Both suites, run on this branch:
+Both suites, run on this branch. The bar is stated rather than counted: a test count printed here is
+wrong by the next commit, and the rule is what a reader can check for themselves.
 
 | Package | Tests | Line coverage | Floor | Lint |
 | ------- | ----- | ------------- | ----- | ---- |
-| `factchecker` | 79 passing | 100 % | 80 % | clean |
-| `statement-classifier` | 27 passing | 93 % | 80 % | clean |
+| `fact-checker` | all passing | above the floor | 80 % | clean |
+| `statement-classifier` | all passing | above the floor | 80 % | clean |
 
 ```bash
-cd packages/factchecker         && uv run poe lint && uv run poe test
+cd packages/fact-checker        && uv run poe lint && uv run poe test
 cd packages/statement-classifier && uv run poe lint && uv run poe test
 ```
 
 `lint` runs `ruff check` and `ruff format --check`. `test` runs the suite under coverage, and the
 report fails below 80 percent.
 
-**No test calls a model.** Both suites drive the model boundary through a fake, so the checks need no
-credential and make no network call. That is why no CI job carries a secret.
+**No test in either suite calls a model.** Both drive the model boundary — and, in stage two, the
+search and fetch tools as well — through fakes, so the checks need no credential and make no network
+call. That is why no CI job carries a secret. Stage two also carries one credentialed end-to-end
+test, marked `integration` and deselected by its test task. It is run by hand, never by CI.
 
 Coverage includes the failure paths, not only the happy one: per-statement timeouts and isolation, a
 rejected credential ending a run, duplicate identifiers, malformed input, unwritable output paths,
@@ -272,10 +283,13 @@ What a run emits today, with no extra instrumentation:
   stays clean for a pipe.
 - **The reason a run ended is logged at `CRITICAL`**, so no setting of `LOG_LEVEL` can hide why a
   non-zero exit code was returned.
-- **Level control** by `--verbose` or the `LOG_LEVEL` environment variable, defaulting to `INFO`.
-  `--verbose` also prints the traceback under a rejected input.
+- **Level control** by the `LOG_LEVEL` environment variable, defaulting to `INFO`. There is no
+  `--verbose` flag on either stage. At `DEBUG` stage two also logs one line per tool call and the
+  traceback behind any failure.
 - **A per-run `meta` block** carrying `startedAt`, `finishedAt`, `counts` (total, checked, skipped,
-  failed) and `usage` (prompt tokens, completion tokens, searches).
+  failed) and `usage` (prompt tokens, completion tokens, searches). `searches` counts search calls
+  that reached the provider, so a search retried after a transient failure counts each attempt, and
+  one answered from the run's cache counts none.
 
 Cost, throughput and failure rate all come straight off that block.
 
@@ -300,23 +314,27 @@ can try to steer its own classification.
   test suite. Each statement is classified in its own call, so one poisoned statement cannot reach
   its siblings — but that is a consequence of the design, not a control we tested.
 
-### 2. Injection through fetched web pages — *not mitigated, not yet built*
+### 2. Injection through fetched web pages — *not mitigated*
 
-The checking agent will fetch pages the model chooses and feed them back to it. Those pages are
+The checking agent fetches pages the model chooses and feeds them back to it. Those pages are
 untrusted input from an attacker-influenceable source, and this is the larger exposure of the two.
-The agent is on a branch and has not merged. The controls that exist on that branch are a bounded
-tool-call budget and a ceiling on how many characters of a fetched page reach the model. Neither is
-an injection defence, and no adversarial test exercises this path.
+
+What holds today: the system prompt tells the agent that text the tools return is retrieved web
+content — evidence to weigh, never instruction to follow — and a fetched page is cut at the
+100 000-character ceiling before it reaches the model. That is a statement of intent and a size
+limit. Nothing detects or neutralises an injection attempt, nothing separates page content from
+instruction at the protocol level, and no adversarial test exercises this path.
 
 ### 3. Credential disclosure — *mitigated*
 
 Two credentials: an OpenRouter API key and a search-provider API token.
 
 The search provider authenticates by a query parameter rather than a header, which makes the
-endpoint URL itself a credential. It is wrapped in a type that builds the real URL only when a
-caller asks for it by that name. Converting it to a string, printing it, logging it, or comparing
-two of them all yield `?token=REDACTED` — redaction is a property of the value, so no log record and
-no exception message can leak it however the endpoint reaches them.
+endpoint URL itself a credential. It is wrapped in a settings type that builds the real URL only
+when a caller asks for it by that name; printing that type, logging it, or letting it reach a
+traceback yields the endpoint with `***` in the token's place. Because an upstream failure can quote
+the real URL in a message of its own, every message stage two reports, logs or publishes also passes
+through a scrub that replaces the token wherever it appears.
 
 The OpenRouter key is kept out of the settings object's generated `repr`, because the test task runs
 `pytest --showlocals` and a key printed into a CI log is a key to rotate.
@@ -325,8 +343,7 @@ The OpenRouter key is kept out of the settings object's generated `repr`, becaus
 
 ### 4. Cost exhaustion and runaway loops — *partly mitigated*
 
-The system makes one model call per statement, and the checking agent will make tool calls in a
-loop.
+The system makes one model call per statement, and the checking agent makes tool calls in a loop.
 
 - *Mitigated.* Bounded concurrency (5 for the classifier, 8 for the checker), a 240-second
   per-statement timeout that cancels the check, a bounded retry count, a tool-call budget of 10 per
@@ -334,12 +351,13 @@ loop.
 - *Not mitigated.* No cap on total spend per run, no budget alerting, and no rate-limit-aware
   backpressure beyond per-call retry with backoff.
 
-### 5. Server-side request forgery through the fetch path — *not mitigated, not yet built*
+### 5. Server-side request forgery through the fetch path — *not mitigated*
 
-The checking agent will fetch URLs the model selects. There is no destination allowlist and no
-private-address blocklist. Fetching runs through a hosted search provider rather than a raw HTTP
-client in our process, which narrows the exposure but does not close it. This needs an explicit
-control before the agent merges.
+The checking agent fetches URLs the model selects. There is no destination allowlist and no
+private-address blocklist: nothing in the code constrains where a fetch goes. Fetching runs through
+Bright Data's hosted server rather than a raw HTTP client in our process, so the request leaves from
+their network and not from ours, which narrows the exposure but does not close it and is not a
+control we own. This still needs an explicit destination control.
 
 ### 6. Supply chain — *partly mitigated*
 
@@ -353,7 +371,7 @@ control before the agent merges.
 
 References come from the checker, and nothing compares an excerpt against the page it was drawn
 from. An excerpt may be a paraphrase rather than a quotation. This was accepted deliberately in
-exchange for speed, and it is stated in the `factchecker` README: read `source` as a pointer to
+exchange for speed, and it is stated in the `fact-checker` README: read `source` as a pointer to
 follow, not as a promise that `excerpt` appears there word for word.
 
 ### 8. Untested attack surface — *acknowledged*
@@ -365,8 +383,9 @@ evidence behind them. We would rather list them here than claim coverage we do n
 
 - **No credential is committed.** `.gitignore` excludes `.env`, the local agent token, virtual
   environments and caches. `git ls-files` shows no credential tracked.
-- **Configuration is environment-only.** `packages/factchecker/.env.example` documents every setting
-  with its value left blank, and names the default that applies while each is unset.
+- **Configuration is environment-only.** `packages/fact-checker/.env.example` names every setting
+  with its value left blank, and that package's README gives the default that applies while each is
+  unset. A blank value is read as unset, never as zero.
 - **No secret reaches CI.** No workflow declares one, and no test needs one.
 - **Gap.** No automated secret scanning runs — not in CI, and not as a pre-commit hook. Hygiene here
   rests on `.gitignore` and review.
@@ -379,14 +398,15 @@ authoritative for its package.
 | Package | Manifest | Principal runtime dependencies |
 | ------- | -------- | ------------------------------ |
 | `statement-classifier` | `pyproject.toml` + `uv.lock` | `langchain`, `langchain-openai`, `openai`, `pydantic` |
-| `factchecker` | `pyproject.toml` + `uv.lock` | `pydantic` |
+| `fact-checker` | `pyproject.toml` + `uv.lock` | `langchain-core`, `langchain-mcp-adapters`, `langchain-openai`, `openai`, `httpx`, `pydantic`, `python-dotenv` |
 | `frontend` | `package.json` + `package-lock.json` | `react`, `react-dom` |
 
 Shared development tooling: `ruff`, `pytest`, `coverage`, `poethepoet`, and `uv` itself.
 
-External services: **OpenRouter** as the model gateway for both Python packages, and a hosted search
-provider reached over MCP by the checking agent on its branch. Google Fonts serves IBM Plex to the
-design system and the pitch deck.
+External services: **OpenRouter** as the model gateway for both Python packages, and **Bright Data's
+hosted MCP server** as the search and fetch provider for the checking agent. The agent reaches it
+with `langchain-mcp-adapters` and uses exactly two of its tools, `search_engine` and
+`scrape_as_markdown`. Google Fonts serves IBM Plex to the design system and the pitch deck.
 
 This project is MIT licensed. Its dependencies are predominantly MIT and Apache-2.0. No
 per-dependency license audit has been run.
@@ -405,11 +425,12 @@ evidence in any process with a consequence for someone. A `refuted` verdict mean
 run found contradicts the claim. It does not mean the claim is false, and it says nothing about the
 intent of whoever wrote it.
 
-**Models and providers.** OpenRouter is the gateway for both stages. The classifier defaults to
-`anthropic/claude-sonnet-5`; the checking agent, on its branch, defaults to `google/gemma-4-31b-it`.
-Both are set by environment variable, and both defaults are recorded in code and in
-`.env.example` — including the reasoning to pin an explicit version rather than a `-latest` alias,
-so an evaluation can tell a prompt regression from a model swap underneath it.
+**Models and providers.** OpenRouter is the gateway for both stages, and Bright Data's hosted MCP
+server supplies the checking agent's search and fetch tools. The classifier defaults to
+`anthropic/claude-sonnet-5`; the checking agent defaults to `google/gemma-4-31b-it`. Both are set by
+environment variable, and both defaults are recorded in code and published in the package READMEs.
+Each names an explicit version rather than a `-latest` alias, so an evaluation can tell a prompt
+regression from a model swap underneath it.
 
 **Data handling.** Input text is sent to the model provider, and to the search provider for the
 statements that get checked. Retention is theirs and is governed by their terms, not by us. Both
@@ -424,8 +445,8 @@ on top of a verdict would remove the only control the design has.
 
 **Transparency.** Every verdict carries a justification and its references. The vocabulary refuses to
 overclaim: `unverifiable` is a distinct, reportable finding, and confidence measures trust in the
-verdict rather than the truth of the claim. Where the checking agent is absent, the tool says so in
-the justification of every statement rather than failing quietly.
+verdict rather than the truth of the claim. A statement the run could not check carries an `error`
+naming what went wrong, rather than a guessed verdict.
 
 **Change management.** Prompts, model defaults and thresholds live in source, so changing one is a
 pull request that runs the same checks as any other change. Both packages are versioned and
@@ -457,11 +478,11 @@ gesture at it.
   brief. It carries a `SKILL.md` so it can be applied consistently to new surfaces.
 - **Design and architecture decisions were made by the team.** The three-stage split, the contract
   shapes, the error-isolation model, the verdict vocabulary and the credential-redaction approach
-  were human decisions, written up as specs before implementation. The classifier's spec is
-committed at `packages/statement-classifier/SPEC.md`.
+  were human decisions, written up as specs before implementation. Each package's spec is committed
+  beside its code, at `packages/statement-classifier/SPEC.md` and `packages/fact-checker/SPEC.md`.
 - **All generated code was reviewed before merge**, and every claim in the [Testing
   evidence](#testing-evidence) table was produced by running the suites, not by asking a model what
-  it thought the numbers were.
+  it thought the result was.
 
 At run time the product itself calls models: see [AI system card](#ai-system-card) for which ones
 and for what.
@@ -470,10 +491,12 @@ and for what.
 
 Stated plainly, because a disclosed gap is worth more than a quiet one.
 
-1. **No checking agent has merged.** The pipeline runs end to end, and stage two rules `unverifiable`
-   on everything without searching.
-2. **No accuracy evaluation.** No labelled set, no harness, no baseline. We report cost and latency,
-   not correctness.
+1. **References are not verified.** The checking agent writes each reference itself, and nothing
+   compares an excerpt against the page it came from. An excerpt may be a paraphrase rather than a
+   quotation. Read `source` as a pointer to follow, not as a promise about `excerpt`.
+2. **No accuracy baseline.** Stage two's hand-run cases catch a prompt regression on the claims
+   they cover. There is no labelled set big enough for a baseline, and nothing measures the
+   classifier. We report cost and latency, not correctness.
 3. **No extraction stage.** Statements must arrive already split out with their surrounding context.
    Nothing in this repository turns a document into that shape.
 4. **The display reads fixed data.** The user-selectable file picker is not built.
@@ -495,16 +518,15 @@ Stated plainly, because a disclosed gap is worth more than a quiet one.
 
 In the order we would do it.
 
-1. **Merge the checking agent** and make stage two search for real.
-2. **Adversarial tests** for threats 1, 2 and 5 — injection through input, injection through fetched
-   pages, and the fetch destination. A destination control before the agent merges.
-3. **A small labelled set and an evaluation harness**, so a prompt or model change can be judged
-   rather than guessed at.
-4. **The file picker** in the display app, closing the loop the demo describes.
-5. **An extraction stage** in front of the classifier, so the input is a document rather than a
+1. **Adversarial tests** for threats 1, 2 and 5 — injection through input, injection through fetched
+   pages, and the fetch destination — and a destination control on the fetch path.
+2. **A labelled set big enough for a baseline**, beyond stage two's hand-run cases, so a prompt or
+   model change can be judged rather than guessed at.
+3. **The file picker** in the display app, closing the loop the demo describes.
+4. **An extraction stage** in front of the classifier, so the input is a document rather than a
    prepared JSON file.
-6. **Secret scanning and dependency scanning in CI**, and actions pinned by commit SHA.
-7. **Deployment**, with the ownership and incident process that has to come with it.
+5. **Secret scanning and dependency scanning in CI**, and actions pinned by commit SHA.
+6. **Deployment**, with the ownership and incident process that has to come with it.
 
 ## Team
 
