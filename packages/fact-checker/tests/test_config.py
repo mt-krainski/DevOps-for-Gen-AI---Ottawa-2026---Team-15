@@ -105,6 +105,18 @@ def test_a_blank_credential_counts_as_missing(
     assert "OPENROUTER_API_KEY" in raised.value.message
 
 
+def test_a_blank_numeric_variable_falls_back_to_its_default(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """A blank number means unset, the way a part-filled `.env` leaves it."""
+    set_credentials(clean_env)
+    clean_env.setenv("FACT_CHECKER_CONCURRENCY", "")
+
+    config = load_config()
+
+    assert config.concurrency == 8
+
+
 def test_a_number_that_does_not_parse_names_the_variable_and_the_value(
     clean_env: pytest.MonkeyPatch,
 ) -> None:
@@ -142,6 +154,18 @@ def test_a_tool_call_budget_of_zero_is_rejected(clean_env: pytest.MonkeyPatch) -
 
     assert raised.value.code is ErrorCode.INVALID_INPUT
     assert "FACT_CHECKER_TOOL_CALL_BUDGET" in raised.value.message
+
+
+def test_a_scrape_char_limit_of_zero_is_rejected(clean_env: pytest.MonkeyPatch) -> None:
+    """A limit of zero would cut every scraped page to nothing."""
+    set_credentials(clean_env)
+    clean_env.setenv("FACT_CHECKER_SCRAPE_CHAR_LIMIT", "0")
+
+    with pytest.raises(CheckError) as raised:
+        load_config()
+
+    assert raised.value.code is ErrorCode.INVALID_INPUT
+    assert "FACT_CHECKER_SCRAPE_CHAR_LIMIT" in raised.value.message
 
 
 def test_a_timeout_below_the_budget_floor_names_all_three_numbers(

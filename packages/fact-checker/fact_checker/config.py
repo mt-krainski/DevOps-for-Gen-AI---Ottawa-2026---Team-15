@@ -96,7 +96,7 @@ def load_config() -> CheckerConfig:
         concurrency=_read_positive_int("FACT_CHECKER_CONCURRENCY", DEFAULT_CONCURRENCY),
         tool_call_budget=tool_call_budget,
         statement_timeout_seconds=statement_timeout_seconds,
-        scrape_char_limit=_read_int(
+        scrape_char_limit=_read_positive_int(
             "FACT_CHECKER_SCRAPE_CHAR_LIMIT", DEFAULT_SCRAPE_CHAR_LIMIT
         ),
     )

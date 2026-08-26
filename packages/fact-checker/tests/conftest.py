@@ -1,9 +1,4 @@
-"""Helpers the test files in this package share.
-
-The test files import from this module by name. That resolves because pytest imports
-a conftest before any test module and registers it in `sys.modules` under its
-rootdir-relative dotted name, which `[tool.pytest.ini_options]` pins to this package.
-"""
+"""Fixtures the test files in this package share."""
 
 import pytest
 
