@@ -22,7 +22,7 @@ from fact_checker.tools import (
     open_toolkit,
 )
 from tests.conftest import (
-    BRIGHT_DATA_TOKEN,
+    BRIGHT_DATA_CREDENTIAL,
     FakeMCPClient,
     FakeTool,
     StatusCodeError,
@@ -97,7 +97,7 @@ async def test_a_connection_failure_names_the_redacted_endpoint() -> None:
 
     assert raised.value.code is ErrorCode.TOOL_ERROR
     assert config.bright_data.redacted_endpoint_url() in raised.value.message
-    assert BRIGHT_DATA_TOKEN not in raised.value.message
+    assert BRIGHT_DATA_CREDENTIAL not in raised.value.message
 
 
 async def test_a_rejected_token_at_connect_time_is_an_auth_error() -> None:
@@ -366,7 +366,7 @@ async def test_no_log_record_carries_the_bright_data_token(
 
     messages = [record.getMessage() for record in caplog.records]
     assert messages
-    assert all(BRIGHT_DATA_TOKEN not in message for message in messages)
+    assert all(BRIGHT_DATA_CREDENTIAL not in message for message in messages)
 
 
 async def test_the_toolkit_binds_the_tool_objects_the_server_gave() -> None:

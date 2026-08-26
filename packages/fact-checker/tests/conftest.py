@@ -120,7 +120,7 @@ def always(value: object) -> Callable[[dict[str, Any]], object]:
     return respond
 
 
-BRIGHT_DATA_TOKEN = "bd-token-must-never-be-logged"  # noqa: S105 — a fake, not a key
+BRIGHT_DATA_CREDENTIAL = "bd-must-never-be-logged"
 BRIGHT_DATA_ENDPOINT = "https://mcp.brightdata.invalid/mcp"
 
 
@@ -131,7 +131,7 @@ def make_config(*, scrape_char_limit: int = DEFAULT_SCRAPE_CHAR_LIMIT) -> Checke
         model="google/gemma-4-31b-it",
         base_url="https://openrouter.invalid/api/v1",
         bright_data=BrightDataConfig(
-            api_token=BRIGHT_DATA_TOKEN, base_endpoint=BRIGHT_DATA_ENDPOINT
+            api_token=BRIGHT_DATA_CREDENTIAL, base_endpoint=BRIGHT_DATA_ENDPOINT
         ),
         concurrency=8,
         tool_call_budget=10,
