@@ -198,11 +198,11 @@ verdict at high confidence says the tool is sure the claim cannot be settled thi
 - A statement that exceeds 240 seconds fails with `TIMEOUT`. The timeout catches a hang; it is never
   the constraint that shapes normal work. The tool-call budget is the deliberate limit, so the
   timeout is rejected at start-up unless it clears 24 seconds for every call the budget allows.
-  Raising the budget raises the timeout with it.
-- Transient failures are retried three times with exponential backoff and jitter. A transient
-  failure is a 429, a 5xx, or a dropped connection. A 400 is not retried: nothing about waiting
-  makes a malformed request valid. The MCP client stack runs on task groups, so a failure can arrive
-  wrapped in an `ExceptionGroup` and the classification looks inside one.
+  Raising the budget raises that floor with it.
+- Transient failures are retried twice, three attempts in all, with exponential backoff and jitter.
+  A transient failure is a 429, a 5xx, or a dropped connection. A 400 is not retried: nothing about
+  waiting makes a malformed request valid. The MCP client stack runs on task groups, so a failure
+  can arrive wrapped in an `ExceptionGroup` and the classification looks inside one.
 - **An authentication failure ends the run.** A rejected credential fails every statement the same
   way, so fifty per-statement errors would cost four minutes to say what one error says in three
   seconds.

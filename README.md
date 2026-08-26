@@ -8,9 +8,9 @@ verdict and the sources behind it.
 
 The tool reports what the evidence shows. It does not establish truth, and its vocabulary says so.
 
-> **Read this first.** Section [Demo notes](#demo-notes--what-is-real-and-what-is-not) lists exactly
-> what runs live and what is a stand-in, and [Known limitations](#known-limitations) lists what does
-> not exist at all. Nothing below is claimed as built unless it is.
+> **Read this first.** Section [Demo notes](#demo-notes--what-is-real-and-what-is-not) states how
+> far each component is built, and [Known limitations](#known-limitations) lists what does not exist
+> at all. Nothing below is claimed as built unless it is.
 
 ## Contents
 
@@ -175,8 +175,8 @@ uv run fact-checker --input classified.json --output rulings.json
 
 This one searches the web, so it needs both credentials: `OPENROUTER_API_KEY` for the agent and
 `BRIGHTDATA_API_TOKEN` for the search and fetch tools. Without either it exits `3` and checks
-nothing. Both paths are required — there is no stdin or stdout mode, because the payload must not
-share stdout with a log line.
+nothing. Both paths are required — there is no stdin or stdout mode, for the reason
+[`packages/fact-checker/README.md`](packages/fact-checker/README.md) gives.
 
 ### Run stage three — display
 
@@ -278,14 +278,17 @@ pipeline — nothing is deployed anywhere.
 
 What a run emits today, with no extra instrumentation:
 
-- **One structured log line per statement**, naming the statement, its elapsed time, and its outcome.
+- **Stage two writes one structured log line per statement**, naming the statement, its elapsed
+  time, and its outcome.
+- **Stage one writes no log records at all.** It imports `logging` nowhere. Its outcome reaches the
+  caller through the exit code, and a failure adds one JSON `{code, message}` object on stderr.
 - **Every log record goes to stderr.** The payload is written only to the output file, so stdout
   stays clean for a pipe.
-- **The reason a run ended is logged at `CRITICAL`**, so no setting of `LOG_LEVEL` can hide why a
-  non-zero exit code was returned.
-- **Level control** by the `LOG_LEVEL` environment variable, defaulting to `INFO`. There is no
-  `--verbose` flag on either stage. At `DEBUG` stage two also logs one line per tool call and the
-  traceback behind any failure.
+- **Stage two logs the reason a run ended at `CRITICAL`**, so no setting of `LOG_LEVEL` can hide why
+  a non-zero exit code was returned.
+- **Level control** in stage two by the `LOG_LEVEL` environment variable, defaulting to `INFO`.
+  There is no `--verbose` flag on either stage, and stage one has no level to control. At `DEBUG`
+  stage two also logs one line per tool call and the traceback behind any failure.
 - **A per-run `meta` block** carrying `startedAt`, `finishedAt`, `counts` (total, checked, skipped,
   failed) and `usage` (prompt tokens, completion tokens, searches). `searches` counts search calls
   that reached the provider, so a search retried after a transient failure counts each attempt, and
@@ -491,9 +494,9 @@ and for what.
 
 Stated plainly, because a disclosed gap is worth more than a quiet one.
 
-1. **References are not verified.** The checking agent writes each reference itself, and nothing
-   compares an excerpt against the page it came from. An excerpt may be a paraphrase rather than a
-   quotation. Read `source` as a pointer to follow, not as a promise about `excerpt`.
+1. **References are not verified.** Nothing compares an excerpt against the page it came from. The
+   accepted limitation, and how to read a reference because of it, are stated in
+   [`packages/fact-checker/README.md`](packages/fact-checker/README.md).
 2. **No accuracy baseline.** Stage two's hand-run cases catch a prompt regression on the claims
    they cover. There is no labelled set big enough for a baseline, and nothing measures the
    classifier. We report cost and latency, not correctness.

@@ -42,7 +42,7 @@ budget or scrape limit — they never see the blank one.
 so `FACT_CHECKER_STATEMENT_TIMEOUT_SECONDS` must be at least 24 times
 `FACT_CHECKER_TOOL_CALL_BUDGET`. A timeout under that floor is rejected at start-up as
 `INVALID_INPUT`: the timeout guards against a hang, and it must never be the limit that shapes
-normal work. Raising the budget raises the timeout with it.
+normal work. Raising the budget raises that floor with it.
 
 `LOG_LEVEL` takes `CRITICAL`, `ERROR`, `WARNING`, `INFO` or `DEBUG`. Anything else is reported as a
 warning and the run continues at `INFO`. There is no `--verbose` flag; this variable is the level
@@ -55,7 +55,8 @@ fact-checker --input statements.json --output rulings.json
 ```
 
 Both arguments are required, and both take a path. There is no stdin or stdout mode: the payload is
-written only to `--output`, and every log record goes to stderr, so stdout stays clean.
+written only to `--output`. A check is slow and spends real credentials, so its result belongs in a
+file that outlives the run rather than in a stream a caller may lose.
 
 At `INFO` the tool writes one line per statement, naming its id, its outcome, the elapsed time and
 the tool calls it spent. At `DEBUG` it also writes one line per tool call and the traceback behind

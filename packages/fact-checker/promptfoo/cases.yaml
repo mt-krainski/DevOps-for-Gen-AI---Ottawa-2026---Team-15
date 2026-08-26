@@ -1,7 +1,6 @@
-# Twenty cases, spread across the four verdicts, plus two opinions that must
-# pass through unchecked. Each `assert` here is the case's own expectation; the
-# wire-contract assertion every case also carries lives in the config's
-# `defaultTest`.
+# Cases spread across the four verdicts, plus opinions that must pass through
+# unchecked. Each `assert` here is the case's own expectation; the wire-contract
+# assertion every case also carries lives in the config's `defaultTest`.
 #
 # A case that fails on the model's judgement is a finding about the prompt or
 # the model. It is not a reason to loosen the assertion.
