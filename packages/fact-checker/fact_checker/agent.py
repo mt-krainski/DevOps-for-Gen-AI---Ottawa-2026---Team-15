@@ -124,10 +124,11 @@ class RulingModel(Protocol):
 
 @dataclass
 class _Tally:
-    """What the model calls have cost this statement so far."""
+    """What this statement has spent so far: model tokens, and tool calls."""
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    tool_calls: int = 0
 
     def add(self, response: object) -> None:
         """Add one response's usage, counting zero where it reports none."""
@@ -184,14 +185,14 @@ async def check_one(
 
     Raises:
         StatementFailure: This statement failed, and the run carries on without
-            it. A budget that ran out is not a failure: the agent rules on what
-            it holds.
+            it, told what the attempt spent. A budget that ran out is not a
+            failure: the agent rules on what it holds.
         AuthenticationFailure: A credential was rejected, which ends the run.
     """
     messages = _opening_messages(statement, budget)
     tally = _Tally()
     try:
-        calls_used = await _spend_the_budget(
+        await _spend_the_budget(
             messages,
             toolkit=toolkit,
             checking_model=checking_model,
@@ -201,14 +202,18 @@ async def check_one(
         ruling = await _rule(
             messages, ruling_model=ruling_model, toolkit=toolkit, tally=tally
         )
-    except (StatementFailure, AuthenticationFailure) as failure:
+    except StatementFailure as failure:
+        failure.tool_calls_used = tally.tool_calls
+        _log_failure(identifier, failure, toolkit)
+        raise
+    except AuthenticationFailure as failure:
         _log_failure(identifier, failure, toolkit)
         raise
     return AgentRun(
         ruling=ruling,
         prompt_tokens=tally.prompt_tokens,
         completion_tokens=tally.completion_tokens,
-        tool_calls_used=calls_used,
+        tool_calls_used=tally.tool_calls,
     )
 
 
@@ -233,24 +238,24 @@ async def _spend_the_budget(
     checking_model: CheckingModel,
     budget: int,
     tally: _Tally,
-) -> int:
+) -> None:
     async def ask() -> AIMessage:
         return await checking_model.ainvoke(messages)
 
-    calls_used = 0
-    while calls_used < budget:
+    while tally.tool_calls < budget:
         response = await _classified(lambda: with_retry(ask), toolkit)
         tally.add(response)
         messages.append(response)
         if not response.tool_calls:
             break
-        calls_used += await _run_tool_calls(
-            response.tool_calls, messages, toolkit, remaining=budget - calls_used
+        await _run_tool_calls(
+            response.tool_calls, messages, toolkit, budget=budget, tally=tally
         )
         messages.append(
-            HumanMessage(BUDGET_NOTICE_TEMPLATE.format(remaining=budget - calls_used))
+            HumanMessage(
+                BUDGET_NOTICE_TEMPLATE.format(remaining=budget - tally.tool_calls)
+            )
         )
-    return calls_used
 
 
 async def _run_tool_calls(
@@ -258,19 +263,18 @@ async def _run_tool_calls(
     messages: list[BaseMessage],
     toolkit: Toolkit,
     *,
-    remaining: int,
-) -> int:
-    made = 0
+    budget: int,
+    tally: _Tally,
+) -> None:
     for call in calls:
-        if made == remaining:
+        if tally.tool_calls == budget:
             messages.append(ToolMessage(BUDGET_SPENT_NOTICE, tool_call_id=call["id"]))
             continue
         result = await _classified(
             partial(toolkit.call, call["name"], call["args"]), toolkit
         )
         messages.append(ToolMessage(result, tool_call_id=call["id"]))
-        made += 1
-    return made
+        tally.tool_calls += 1
 
 
 async def _rule(

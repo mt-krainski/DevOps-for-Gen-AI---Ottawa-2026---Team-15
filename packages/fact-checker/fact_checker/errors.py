@@ -35,13 +35,22 @@ class CheckError(Exception):
 # suffix N818 asks for: each is a control-flow signal between the agent and the
 # service, and the pair reads as one distinction at the call site.
 class StatementFailure(Exception):  # noqa: N818 — see the note above
-    """A per-statement failure: isolated onto that statement's `error` field."""
+    """A per-statement failure: isolated onto that statement's `error` field.
 
-    def __init__(self, code: ErrorCode, message: str) -> None:
-        """Carry the code and the message that statement's `error` field takes."""
+    `tool_calls_used` is what the statement had spent when it failed, which the
+    run reports beside the outcome. A site that raises without holding the
+    running count leaves it `None`, and the checking loop fills it in on the way
+    out. `None` therefore means unknown, and never zero.
+    """
+
+    def __init__(
+        self, code: ErrorCode, message: str, tool_calls_used: int | None = None
+    ) -> None:
+        """Carry the code, the message, and the calls spent where they are known."""
         super().__init__(message)
         self.code = code
         self.message = message
+        self.tool_calls_used = tool_calls_used
 
 
 class AuthenticationFailure(Exception):  # noqa: N818 — see the note above

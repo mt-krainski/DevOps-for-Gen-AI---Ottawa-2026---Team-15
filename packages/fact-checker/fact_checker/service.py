@@ -93,14 +93,13 @@ async def check_statements(
             checker_input.statements, identifiers, settings, opened
         )
         finished_at = now()
-
-    return _assembled(
-        outcomes,
-        config=settings,
-        toolkit=opened.toolkit,
-        started_at=started_at,
-        finished_at=finished_at,
-    )
+        return _assembled(
+            outcomes,
+            config=settings,
+            toolkit=opened.toolkit,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
 
 
 @asynccontextmanager
@@ -203,7 +202,7 @@ async def _checked(
             identifier,
             f"failed ({error.code})",
             elapsed=time.perf_counter() - started,
-            tool_calls=0,
+            tool_calls=_calls_spent(failure),
         )
         return _Outcome(entry=_entry(statement, identifier, error=error))
 
@@ -231,6 +230,16 @@ def _error_for(
     )
 
 
+def _calls_spent(failure: TimeoutError | StatementFailure) -> int | None:
+    """Return the tool calls the failed check spent, or `None` where none is known.
+
+    A timeout cancels the check part-way, which takes the running count with it.
+    """
+    if isinstance(failure, StatementFailure):
+        return failure.tool_calls_used
+    return None
+
+
 def _entry(
     statement: InputStatement,
     identifier: str,
@@ -249,11 +258,10 @@ def _entry(
 
 
 def _log_outcome(
-    identifier: str, outcome: str, *, elapsed: float, tool_calls: int
+    identifier: str, outcome: str, *, elapsed: float, tool_calls: int | None
 ) -> None:
-    logger.info(
-        "%s: %s in %.2fs, %d tool calls", identifier, outcome, elapsed, tool_calls
-    )
+    spent = "an unknown number of" if tool_calls is None else tool_calls
+    logger.info("%s: %s in %.2fs, %s tool calls", identifier, outcome, elapsed, spent)
 
 
 def _assembled(

@@ -436,6 +436,40 @@ async def test_a_tool_failure_keeps_the_code_the_toolkit_gave_it() -> None:
     assert raised.value.message == "search_engine reported a failure"
 
 
+async def test_a_failure_carries_the_tool_calls_the_statement_had_spent() -> None:
+    """The run's log line reports what a failed check cost, so it has to travel."""
+    toolkit = FakeToolkit(
+        ["1. A report", StatementFailure(ErrorCode.TOOL_ERROR, "the server said no")]
+    )
+    checking_model = FakeCheckingModel(
+        [a_turn(a_search_call("c1"), a_search_call("c2"))]
+    )
+    ruling_model = FakeRulingModel([])
+
+    with pytest.raises(StatementFailure) as raised:
+        await run_check(
+            toolkit=toolkit, checking_model=checking_model, ruling_model=ruling_model
+        )
+
+    assert raised.value.tool_calls_used == 1
+
+
+async def test_a_failure_before_any_tool_call_carries_a_spend_of_zero() -> None:
+    """Zero is the honest count where the statement failed on its opening turn."""
+    toolkit = FakeToolkit([])
+    checking_model = FakeCheckingModel(
+        [openai_status_error(openai.BadRequestError, 400)]
+    )
+    ruling_model = FakeRulingModel([])
+
+    with pytest.raises(StatementFailure) as raised:
+        await run_check(
+            toolkit=toolkit, checking_model=checking_model, ruling_model=ruling_model
+        )
+
+    assert raised.value.tool_calls_used == 0
+
+
 async def test_a_reported_failure_never_carries_the_bright_data_token() -> None:
     """The transport quotes the request URL, and the token rides in it."""
     toolkit = FakeToolkit([quoting_the_tokened_url(500)])

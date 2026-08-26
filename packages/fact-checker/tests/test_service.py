@@ -34,7 +34,10 @@ from tests.conftest import (
 
 
 def a_runtime(
-    script: Script, *, searches: int = 0, tool_answers: Sequence[str] = ()
+    script: Script,
+    *,
+    searches: int = 0,
+    tool_answers: Sequence[str | BaseException] = (),
 ) -> CheckingRuntime:
     """Build the injected seam: a toolkit answering from a queue, and the fakes."""
     toolkit = FakeToolkit(list(tool_answers))
@@ -53,7 +56,7 @@ async def run_batch(
     searches: int = 0,
     concurrency: int = 8,
     statement_timeout_seconds: int = 240,
-    tool_answers: Sequence[str] = (),
+    tool_answers: Sequence[str | BaseException] = (),
 ) -> CheckerOutput:
     """Check a batch through the fakes, naming only what the test varies."""
     return await check_statements(
@@ -369,6 +372,37 @@ async def test_the_run_opens_its_own_toolkit_when_no_runtime_is_injected(
     assert closed == [toolkit]
 
 
+async def test_the_searches_are_read_while_the_toolkit_is_still_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A toolkit that forgets its count on close still reports what it counted."""
+    script = a_script("The claim.")
+    toolkit = FakeToolkit([])
+    toolkit.searches = 4
+
+    @asynccontextmanager
+    async def open_one(
+        _config: CheckerConfig, _cache: RunCache
+    ) -> AsyncIterator[Toolkit]:
+        try:
+            yield toolkit
+        finally:
+            toolkit.searches = 0
+
+    monkeypatch.setattr(service, "open_toolkit", open_one)
+    monkeypatch.setattr(
+        service,
+        "build_models",
+        lambda _config, _toolkit: (script.checking_model, script.ruling_model),
+    )
+
+    output = await check_statements(
+        a_payload(a_statement("The claim.")), config=make_config()
+    )
+
+    assert output.meta.usage.searches == 4
+
+
 async def test_one_cache_serves_the_whole_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -462,3 +496,39 @@ async def test_the_info_line_reports_the_tool_calls_the_check_spent(
     await run_batch(payload, script, tool_answers=["a result", "another result"])
 
     assert info_lines(caplog)[0].endswith("2 tool calls")
+
+
+async def test_a_failed_check_logs_the_tool_calls_it_had_already_spent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A statement that spends calls and then fails reports what it spent."""
+    caplog.set_level(logging.INFO, logger="fact_checker")
+    text = "The claim."
+    payload = a_payload(a_statement(text))
+    script = a_script(text, **{text: Plan(tool_calls=2)})
+
+    await run_batch(
+        payload,
+        script,
+        tool_answers=["a result", StatementFailure(ErrorCode.TOOL_ERROR, "no")],
+    )
+
+    line = info_lines(caplog)[0]
+    assert line.startswith("s1: failed (TOOL_ERROR) in ")
+    assert line.endswith("1 tool calls")
+
+
+async def test_a_timed_out_check_never_claims_a_tool_call_count(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A cancelled check leaves no count behind, so the line says it does not know."""
+    caplog.set_level(logging.INFO, logger="fact_checker")
+    text = "The hanging claim."
+    payload = a_payload(a_statement(text))
+    script = a_script(text, **{text: Plan(hangs=True)})
+
+    await run_batch(payload, script, statement_timeout_seconds=1)
+
+    line = info_lines(caplog)[0]
+    assert line.startswith("s1: failed (TIMEOUT) in ")
+    assert line.endswith("an unknown number of tool calls")

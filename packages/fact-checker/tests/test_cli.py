@@ -358,7 +358,11 @@ def test_an_unrecognised_log_level_falls_back_to_info_and_says_so(
 def test_no_log_record_anywhere_carries_a_credential(
     tmp_path: Path, offline: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The loudest level the tool offers still says nothing about either secret."""
+    """The loudest level the tool offers still says nothing about either secret.
+
+    This sweeps every record captured, not only this package's own. A library
+    underneath it that quoted a credential would fail this test too.
+    """
     caplog.set_level(logging.DEBUG, logger="fact_checker")
     offline.setenv("LOG_LEVEL", "DEBUG")
     connect_to_fakes(offline, a_script(A_CLAIM, **{A_CLAIM: Plan(tool_calls=1)}))
@@ -366,9 +370,10 @@ def test_no_log_record_anywhere_carries_a_credential(
     code, _ = run_over(tmp_path, a_payload(a_statement(A_CLAIM)))
 
     assert code == 0
-    for message in messages_of(caplog):
-        assert BRIGHT_DATA_CREDENTIAL not in message
-        assert OPENROUTER_CREDENTIAL not in message
+    assert caplog.records
+    for record in caplog.records:
+        assert BRIGHT_DATA_CREDENTIAL not in record.getMessage()
+        assert OPENROUTER_CREDENTIAL not in record.getMessage()
 
 
 def test_an_unexpected_crash_returns_one_without_quoting_the_token(
